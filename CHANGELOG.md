@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.27] - 2026-02-21
+
+### Added
+- Security assessment using `bandit` and `safety` tools.
+
+### Changed
+- Pinned Python dependencies in `requirements.txt` to specific, current versions for enhanced security and reproducibility.
+
+### Fixed
+- Potential vulnerability warnings from unpinned dependencies by explicitly specifying versions.
+
 ## [0.0.26] - 2026-01-20
 
 ### Added
