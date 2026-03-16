@@ -1,3 +1,5 @@
+**Note: This project was created with the assistance of AI. Use with caution.**
+
 # RouteGhost 👻
 
 A security-focused Python application to temporarily expose local services (Jellyfin, Sonarr, etc.) to the internet using rotating subdomains, dynamic Traefik routing, and automated firewall control. Integrates with **Cloudflare**, **UniFi UDM Pro**, **Traefik (Redis)**, and **Home Assistant**.
