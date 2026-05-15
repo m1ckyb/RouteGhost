@@ -3528,6 +3528,33 @@ def test_vps_ssh():
     else:
         return jsonify({"error": message}), 500
 
+@app.route('/api/test/unifi', methods=['POST'])
+@login_required
+def api_test_unifi():
+    """Test UniFi connection with provided credentials."""
+    data = request.get_json(silent=True) or {}
+    host = data.get('host')
+    user = data.get('user')
+    passw = data.get('pass')
+    
+    if not all([host, user, passw]):
+        return jsonify({"error": "Host, Username, and Password are required"}), 400
+        
+    base_url = f"https://{host}"
+    session = requests.Session()
+    session.verify = False
+    
+    try:
+        resp = login_unifi_with_retry(session, base_url, user, passw)
+        if resp and resp.status_code == 200:
+            logout_unifi(session, base_url)
+            return jsonify({"success": True, "message": "UniFi connection successful!"})
+        else:
+            status = resp.status_code if resp else "unknown"
+            return jsonify({"error": f"Login failed (HTTP {status})"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 @app.route('/api/test/cloudflare', methods=['POST'])
 @login_required
 def api_test_cloudflare():
