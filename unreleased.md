@@ -8,3 +8,4 @@
 - UI: Removed Home Assistant onboarding step.
 
 ### Fixed
+- MQTT: Fixed duplicate checkmark emoji in connection success message.

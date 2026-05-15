@@ -3468,7 +3468,7 @@ def test_mqtt_connection_route():
         
         if client.is_connected():
             client.disconnect()
-            return jsonify({"message": "✅ MQTT Connection Successful!"})
+            return jsonify({"message": "MQTT Connection Successful!"})
         else:
             return jsonify({"error": "Could not connect to MQTT Broker"}), 400
             
