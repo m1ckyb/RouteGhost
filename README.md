@@ -15,7 +15,7 @@ A security-focused Python application to temporarily expose local services (Jell
     *   **Traefik**: Dynamic routing via Redis.
     *   **UniFi**: Automatic Port Forwarding management.
     *   **MQTT**: Real-time state updates and Home Assistant Auto Discovery.
-*   **Diagnostics**: Built-in tools to verify DNS, Traefik, and Firewall status.
+*   **Diagnostics**: Built-in tools to verify DNS, Traefik, MQTT, and Firewall (UniFi) connectivity.
 
 ## 🚀 Quick Start
 
