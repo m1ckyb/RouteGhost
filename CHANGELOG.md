@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0] - 2026-05-16
+
+### Removed
+- Home Assistant: Removed legacy direct API integration (HASS_URL, HASS_TOKEN, etc.) as it has been superseded by MQTT.
+- UI: Removed Home Assistant configuration modal and service-level entity ID fields.
+- UI: Removed Home Assistant onboarding step.
+
+### Fixed
+- MQTT: Fixed duplicate checkmark emoji in connection success message.
+
 ## [0.0.28] - 2026-05-16
 
 ### Added
