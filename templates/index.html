@@ -54,7 +54,7 @@
                 <strong>Service:</strong> <code>{{ service.service_name }}</code>
             </div>
             <div class="info-row">
-                <strong>Target:</strong> <code>{{ service.target_url }}</code>
+                <strong>Target:</strong> <code>{{ service.target_url }}</code> ({{ 'VPS Gateway' if service.routing_mode == 'vps' else 'Cloudflare' }})
             </div>
             <div class="info-row">
                 <strong>{% if service.random_suffix %}Prefix{% else %}Hostname{% endif %}:</strong> <code>{{ service.subdomain_prefix }}</code>
