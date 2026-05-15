@@ -211,8 +211,11 @@ class MQTTHandler:
             else:
                 current_url = f"https://{hostname}"
 
+        routing_mode = service.get('routing_mode', 'unifi')
+        routing_label = "VPS Gateway" if routing_mode == 'vps' else "Cloudflare"
+
         attributes = {
-            "routing_mode": service.get('routing_mode', 'unifi'),
+            "routing_mode": routing_label,
             "router": service.get('router_name', 'N/A'),
             "service": service.get('service_name', 'N/A'),
             "target": service.get('target_url', 'N/A'),

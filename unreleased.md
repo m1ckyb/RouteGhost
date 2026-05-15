@@ -8,3 +8,6 @@
 - Dashboard UI: Separated "Target" and "Route" into distinct fields on service cards for better clarity.
 - Updated `redis` to 7.3.0 and `python-dotenv` to 1.2.2 in `requirements.txt`.
 - Added a note to `README.md` clarifying that the project was created with AI assistance.
+
+### Fixed
+- MQTT: Corrected "Routing Mode" attribute to show user-friendly labels (Cloudflare/VPS Gateway) instead of internal values.
