@@ -1,6 +1,6 @@
 # RouteGhost 👻
 
-A security-focused Python application to temporarily expose local services (Jellyfin, Sonarr, etc.) to the internet using rotating subdomains, dynamic Traefik routing, and automated firewall control. Integrates with **Cloudflare**, **UniFi UDM Pro**, **Traefik (Redis)**, and **Home Assistant**.
+A security-focused Python application to temporarily expose local services (Jellyfin, Sonarr, etc.) to the internet using rotating subdomains, dynamic Traefik routing, and automated firewall control. Integrates with **Cloudflare**, **UniFi UDM Pro**, **Traefik (Redis)**, **MQTT**, and **Home Assistant**.
 
 **Note: This project was created with the assistance of AI. Use with caution.**
 
@@ -8,13 +8,14 @@ A security-focused Python application to temporarily expose local services (Jell
 
 *   **Dynamic Access**: Rotating subdomains and random port generation (1024-65535) for every session.
 *   **Security First**: Passkey (WebAuthn) authentication, 2FA (TOTP), and automated firewall toggling.
-*   **Routing Flexibility**: Choose between **Cloudflare Proxy** (Standard) or **VPS Gateway** (Ghost Mode) via WireGuard.
+*   **Routing Flexibility**: Choose between **Cloudflare Proxy** (Standard) or **VPS Gateway** (Ghost Mode) via WireGuard, configurable **per-service**.
 *   **Centralized Control**: Manage multiple services from a single dashboard.
 *   **Integrations**:
     *   **Cloudflare**: Automated DNS and Origin Rules.
     *   **Traefik**: Dynamic routing via Redis.
     *   **UniFi**: Automatic Port Forwarding management.
-    *   **Home Assistant**: Entity state updates.
+    *   **MQTT**: Real-time state updates and Home Assistant Auto Discovery.
+    *   **Home Assistant**: Entity state updates via API.
 *   **Diagnostics**: Built-in tools to verify DNS, Traefik, and Firewall status.
 
 ## 🚀 Quick Start
@@ -68,14 +69,14 @@ Bypasses Cloudflare's proxy and your local firewall ingress entirely by tunnelin
 *   Ensure SSH access is enabled (Key-based auth recommended).
 
 **2. Configure RouteGhost**
-*   Go to **Settings** -> **VPS / WireGuard**.
-*   Select **Routing Mode**: `VPS Gateway + WireGuard`.
+*   Go to **Settings** -> **Infrastructure**.
 *   **VPS Connection**: Enter Host IP, User (e.g., `root`), and paste your **SSH Private Key**.
 *   **WireGuard**:
     *   **Local IP**: `10.0.0.2/24` (or any subnet unused by your networks).
     *   **Local Private Key**: Generate one (`wg genkey`).
     *   **Remote Endpoint**: `YOUR_VPS_IP:51820`.
     *   **Remote Public Key**: The public key of the VPS WireGuard interface.
+*   **Per-Service Setup**: When adding or editing a **Service**, select **Routing Mode**: `VPS Gateway (WireGuard)`.
 
 **3. Configure VPS WireGuard Peer**
 On your VPS, add RouteGhost as a peer in `/etc/wireguard/wg0.conf`:
@@ -97,13 +98,14 @@ Configure these in the Web UI (`/settings`):
 | **Cloudflare** | API Token (DNS/Zone edit), Zone ID, Domain Root, Origin Rule Name |
 | **Traefik/Redis** | Host, Port, Password |
 | **UniFi** | Host, Credentials, Port Forward Rule Name |
+| **MQTT** | Host, Port, Username, Password, Discovery Prefix |
 | **Home Assistant** | URL, Access Token, Entity ID (Optional) |
 
 ## 📖 Usage
 
 ### Web Interface
-*   **Dashboard**: Toggle services on/off, rotate URLs, and view status.
-*   **Services**: Configure internal URLs, Traefik router names, and subdomain prefixes.
+*   **Dashboard**: Toggle services on/off, rotate URLs, and view status (including Target and Route separation).
+*   **Services**: Configure internal URLs, Traefik router names, subdomain prefixes, and **Routing Mode**.
 *   **Diagnostics**: Run health checks on any service to verify connectivity.
 
 ### API
