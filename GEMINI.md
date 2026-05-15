@@ -68,6 +68,9 @@ Every new feature or code change must be evaluated for security risks.
 - API endpoints should return JSON with `error` keys on failure.
 - UI routes should use `flash()` messages.
 
+### Documentation
+- **README.md**: Ensure `README.md` is always up to date with any changes to the code, including new features, configuration options, or architectural changes.
+
 ## Common Tasks
 
 ### Adding a New Setting
@@ -107,11 +110,15 @@ When working on this project, assume the user wants robust, production-ready cod
     - **Content**: Be concise but descriptive. Explain *what* changed and *why*.
     - **Process**: Perform the `unreleased.md` update in the same turn as the code changes.
 
-2.  **Rebuild Local Container**:
+2.  **Update `README.md`**:
+    - Ensure the documentation reflects any changes to features, configuration, or usage.
+    - Perform this update in the same turn as the code changes.
+
+3.  **Rebuild Local Container**:
     - After making changes, always rebuild and restart the local development container to verify the fix/feature.
     - Command: `docker-compose -f docker-compose-dev.yml up -d --build`
 
-3.  **Git Push Restriction**:
+4.  **Git Push Restriction**:
     - **NEVER** push code to GitHub (e.g., `git push`) unless the user explicitly instructs you to do so.
     - Only commit changes locally unless told otherwise.
 
