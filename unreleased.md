@@ -11,3 +11,4 @@
 
 ### Fixed
 - MQTT: Corrected "Routing Mode" attribute to show user-friendly labels (Cloudflare/VPS Gateway) instead of internal values.
+- MQTT: Removed port from "Current URL" attribute as external access is always via standard ports.

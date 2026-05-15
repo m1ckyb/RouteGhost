@@ -200,14 +200,9 @@ class MQTTHandler:
         current_url = "N/A"
         if service.get('current_hostname'):
             hostname = service['current_hostname']
-            port = service.get('current_port')
-            
-            if port == 443:
-                current_url = f"https://{hostname}"
-            elif port == 80:
+            # We omit the port because Cloudflare/VPS handles the rewrite to standard 443/80
+            if service.get('current_port') == 80:
                 current_url = f"http://{hostname}"
-            elif port:
-                current_url = f"https://{hostname}:{port}" # Default to https for RouteGhost
             else:
                 current_url = f"https://{hostname}"
 
