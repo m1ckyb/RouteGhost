@@ -31,6 +31,15 @@
                    placeholder="e.g., jellyfin-service">
             <small>Traefik service name for load balancer</small>
         </div>
+
+        <div class="form-group">
+            <label for="routing_mode">Routing Mode</label>
+            <select id="routing_mode" name="routing_mode" required>
+                <option value="unifi" {% if not service or service.routing_mode == 'unifi' %}selected{% endif %}>Cloudflare + UniFi (Direct)</option>
+                <option value="vps" {% if service and service.routing_mode == 'vps' %}selected{% endif %}>VPS Gateway (WireGuard)</option>
+            </select>
+            <small>Choose how traffic is routed to this service. 'Cloudflare' uses your local public IP and UniFi port forwarding. 'VPS Gateway' tunnels traffic through a WireGuard VPS.</small>
+        </div>
         
         <div class="form-group">
             <label for="target_url">Target URL</label>

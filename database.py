@@ -171,6 +171,14 @@ def init_db():
                 conn.execute("ALTER TABLE services ADD COLUMN show_regex INTEGER DEFAULT 1")
             conn.execute("INSERT INTO schema_version (version) VALUES (9)")
         
+        # Migration 10: Add routing_mode column to services table
+        if current_version < 10:
+            cursor = conn.execute("PRAGMA table_info(services)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'routing_mode' not in columns:
+                conn.execute("ALTER TABLE services ADD COLUMN routing_mode TEXT DEFAULT 'unifi'")
+            conn.execute("INSERT INTO schema_version (version) VALUES (10)")
+        
         conn.commit()
 
 @contextmanager
@@ -204,25 +212,25 @@ def get_service_by_router_name(router_name):
         row = cursor.fetchone()
         return dict(row) if row else None
 
-def add_service(name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1):
+def add_service(name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1, routing_mode='unifi'):
     """Add a new service."""
     with get_db() as conn:
         cursor = conn.execute("""
-            INSERT INTO services (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex))
+            INSERT INTO services (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode))
         conn.commit()
         return cursor.lastrowid
 
-def update_service(service_id, name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1):
+def update_service(service_id, name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1, routing_mode='unifi'):
     """Update an existing service."""
     with get_db() as conn:
         conn.execute("""
             UPDATE services 
             SET name = ?, router_name = ?, service_name = ?, target_url = ?, 
-                subdomain_prefix = ?, hass_entity_id = ?, random_suffix = ?, show_regex = ?, updated_at = CURRENT_TIMESTAMP
+                subdomain_prefix = ?, hass_entity_id = ?, random_suffix = ?, show_regex = ?, routing_mode = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, service_id))
+        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode, service_id))
         conn.commit()
 
 def delete_service(service_id):

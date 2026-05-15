@@ -133,6 +133,7 @@ class MQTTHandler:
             "unique_id": unique_id,
             "command_topic": f"routeghost/service/{service_id}/set",
             "state_topic": f"routeghost/service/{service_id}/state",
+            "json_attributes_topic": f"routeghost/service/{service_id}/attributes",
             "availability_topic": "routeghost/status",
             "device": {
                 "identifiers": ["routeghost_main"],
@@ -145,7 +146,7 @@ class MQTTHandler:
         
         self.client.publish(topic, json.dumps(payload), retain=True)
         
-        # Publish current state immediately
+        # Publish current state and attributes immediately
         is_active = service['enabled'] == 1
         self.publish_state(service, is_active)
 
@@ -161,19 +162,66 @@ class MQTTHandler:
         for service in services:
             self.publish_discovery(service)
 
-    def publish_state(self, service_dict_or_id, is_active):
-        """Publish state update for a service."""
+    def remove_discovery(self, service_id):
+        """Remove Home Assistant Discovery config for a service."""
+        if not self.client or not self.client.is_connected():
+            return
+
+        topic = f"{self.discovery_prefix}/switch/routeghost/{service_id}/config"
+        self.client.publish(topic, "", retain=True)
+        
+        # Also clear state and attributes
+        self.client.publish(f"routeghost/service/{service_id}/state", "", retain=True)
+        self.client.publish(f"routeghost/service/{service_id}/attributes", "", retain=True)
+
+    def publish_state(self, service_dict_or_id, is_active, healthy=None):
+        """Publish state update and attributes for a service."""
         if not self.client or not self.client.is_connected():
             return
 
         if isinstance(service_dict_or_id, dict):
             service_id = service_dict_or_id['id']
+            service = service_dict_or_id
         else:
             service_id = service_dict_or_id
+            service = db.get_service(service_id)
 
+        if not service:
+            return
+
+        # 1. Publish State
         topic = f"routeghost/service/{service_id}/state"
         state = "ON" if is_active else "OFF"
         self.client.publish(topic, state, retain=True)
+
+        # 2. Publish Attributes
+        attr_topic = f"routeghost/service/{service_id}/attributes"
+        
+        current_url = "N/A"
+        if service.get('current_hostname'):
+            hostname = service['current_hostname']
+            port = service.get('current_port')
+            
+            if port == 443:
+                current_url = f"https://{hostname}"
+            elif port == 80:
+                current_url = f"http://{hostname}"
+            elif port:
+                current_url = f"https://{hostname}:{port}" # Default to https for RouteGhost
+            else:
+                current_url = f"https://{hostname}"
+
+        attributes = {
+            "routing_mode": service.get('routing_mode', 'unifi'),
+            "router": service.get('router_name', 'N/A'),
+            "service": service.get('service_name', 'N/A'),
+            "target": service.get('target_url', 'N/A'),
+            "prefix": service.get('subdomain_prefix', 'N/A'),
+            "current_url": current_url,
+            "health": "Healthy" if (healthy if healthy is not None else True) else "Unhealthy"
+        }
+        
+        self.client.publish(attr_topic, json.dumps(attributes), retain=True)
 
     def reload(self):
         """Reload configuration and restart."""

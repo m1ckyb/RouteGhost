@@ -1266,6 +1266,9 @@ def perform_health_check():
                         send_discord_notification(f"✅ Service **{service['name']}** is back ONLINE.", title="Health Alert: Recovered", color=0x2ecc71, msg_type='health')
                     else:
                         send_discord_notification(f"⚠️ Service **{service['name']}** is UNHEALTHY.", title="Health Alert: Failure", color=0xe74c3c, msg_type='health')
+                    
+                    # Update MQTT on health change
+                    mqtt_manager.publish_state(service, True, healthy=is_healthy)
                 
                 HEALTH_STATUS_CACHE[service['id']] = is_healthy
             else:
@@ -1443,7 +1446,7 @@ def turn_off_service(service_id, actor=None):
     r.delete(f"traefik/http/services/{service_name}/loadbalancer/servers/0/url")
 
     # Determine Routing Mode
-    routing_mode = routing.get_routing_mode()
+    routing_mode = routing.get_routing_mode(service)
     unifi_session = None
     unifi_base_url = None
 
@@ -1558,7 +1561,7 @@ def turn_off_service(service_id, actor=None):
     db.update_service_status(service_id, False, None, None)
 
     # Update MQTT
-    mqtt_manager.publish_state(service_id, False)
+    mqtt_manager.publish_state(service_id, False, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
     
     # Sync UniFi Groups (remove this service's IP/Port if not used by others)
     if routing_mode == 'unifi':
@@ -1686,7 +1689,7 @@ def turn_on_service(service_id, force=False, actor=None):
     print(f"\n🚀 === ({actor}) ENABLING {service['name']} ===")
     
     # Determine Routing Mode
-    routing_mode = routing.get_routing_mode()
+    routing_mode = routing.get_routing_mode(service)
     print(f"🔹 Routing Mode: {routing_mode.upper()}")
     
     # Check if any other service is already enabled and get its port
@@ -1900,7 +1903,7 @@ def turn_on_service(service_id, force=False, actor=None):
     db.update_service_status(service_id, True, full_hostname, random_port)
 
     # Update MQTT
-    mqtt_manager.publish_state(service_id, True)
+    mqtt_manager.publish_state(service_id, True, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
 
     # Sync UniFi Groups (add this service's IP/Port)
     if routing_mode == 'unifi':
@@ -2795,13 +2798,14 @@ def new_service():
                 
             random_suffix = 1 if request.form.get('random_suffix') else 0
             show_regex = 1 if request.form.get('show_regex') else 0
+            routing_mode = request.form.get('routing_mode', 'unifi')
             
             # Clean hass_entity_id: strip whitespace and treat "None" as empty
             hass_id = request.form.get('hass_entity_id', '').strip()
             if not hass_id or hass_id.lower() == 'none':
                 hass_id = None
 
-            db.add_service(
+            new_id = db.add_service(
                 name=name,
                 router_name=router_name,
                 service_name=service_name,
@@ -2809,8 +2813,14 @@ def new_service():
                 subdomain_prefix=subdomain_prefix,
                 hass_entity_id=hass_id,
                 random_suffix=random_suffix,
-                show_regex=show_regex
+                show_regex=show_regex,
+                routing_mode=routing_mode
             )
+            # Update MQTT
+            new_service = db.get_service(new_id)
+            if new_service:
+                mqtt_manager.publish_discovery(new_service)
+                
             flash('Service added successfully!', 'success')
             return redirect(url_for('index'))
         except ValueError as e:
@@ -2842,6 +2852,7 @@ def edit_service(service_id):
 
             random_suffix = 1 if request.form.get('random_suffix') else 0
             show_regex = 1 if request.form.get('show_regex') else 0
+            routing_mode = request.form.get('routing_mode', 'unifi')
             
             # Clean hass_entity_id: strip whitespace and treat "None" as empty
             hass_id = request.form.get('hass_entity_id', '').strip()
@@ -2857,8 +2868,14 @@ def edit_service(service_id):
                 subdomain_prefix=subdomain_prefix,
                 hass_entity_id=hass_id,
                 random_suffix=random_suffix,
-                show_regex=show_regex
+                show_regex=show_regex,
+                routing_mode=routing_mode
             )
+            
+            # Update MQTT
+            updated_service = db.get_service(service_id)
+            if updated_service:
+                mqtt_manager.publish_discovery(updated_service)
             
             # If service is active, refresh the external configuration (Redis, DNS, etc.)
             if service.get('enabled'):
@@ -3333,6 +3350,8 @@ def api_delete_service(service_id):
         turn_off_service(service_id)
     
     db.delete_service(service_id)
+    # Update MQTT
+    mqtt_manager.remove_discovery(service_id)
     return jsonify({"message": "Service deleted successfully"})
 
 @app.route('/api/logs', methods=['GET'])

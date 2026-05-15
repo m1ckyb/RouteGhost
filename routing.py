@@ -6,7 +6,9 @@ import database as db
 import time
 import shlex
 
-def get_routing_mode():
+def get_routing_mode(service=None):
+    if service and service.get('routing_mode'):
+        return service['routing_mode']
     return db.get_setting('ROUTING_MODE', 'unifi')
 
 class WireGuardManager:
