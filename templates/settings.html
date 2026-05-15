@@ -292,8 +292,6 @@
                 </div>
             </div>
 
-            <hr style="margin: 2rem 0; border: 0; border-top: 1px solid var(--border);">
-
             <h3>Firewall Controller</h3>
             <div class="form-group">
                 <label for="FIREWALL_TYPE">Firewall Controller Type <span class="tooltip-icon" data-tooltip="System used to manage firewall rules">ℹ️</span></label>
@@ -369,13 +367,11 @@
                     </select>
                 </div>
 
-                <div class="form-group" style="grid-column: 1 / -1; display: flex; gap: 1rem; margin-top: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                <div class="form-group" style="grid-column: 1 / -1; display: flex; gap: 1rem; margin-top: 1rem; padding-top: 1.5rem;">
                     <button type="button" class="btn btn-secondary" onclick="testUnifiConnection(event)">☁️ Test UniFi Connection</button>
                     <button type="button" class="btn btn-secondary" onclick="syncFirewall()">🔄 Sync Firewall Groups Now</button>
                 </div>
             </div>
-
-            <hr style="margin: 2rem 0; border: 0; border-top: 1px solid var(--border);">
 
             <h3>VPS Connection (SSH)</h3>
             <div class="settings-grid-2-col">
@@ -399,8 +395,6 @@
                      <button type="button" class="btn btn-secondary" onclick="testVpsSsh(event)">🔑 Test SSH Connection</button>
                 </div>
             </div>
-
-            <hr style="margin: 2rem 0; border: 0; border-top: 1px solid var(--border);">
 
             <h3>WireGuard Configuration</h3>
             <div class="settings-grid-2-col">
@@ -473,8 +467,6 @@
                 <button type="button" class="btn btn-secondary" onclick="testMQTTConnection(event)">🔌 Test MQTT Connection</button>
             </div>
         </div>
-
-        <hr style="margin: 2rem 0; border: 0; border-top: 1px solid var(--border);">
 
         <h3>Traefik / Redis</h3>
         <div class="settings-grid-2-col">
