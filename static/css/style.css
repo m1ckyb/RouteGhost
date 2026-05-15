@@ -494,8 +494,6 @@ body > .container {
     grid-column: 1 / -1;
 }
 
-/* Containers for conditional settings groups */
-#hass-settings,
 #unifi-settings {
     grid-column: 1 / -1;
     display: grid;
@@ -509,7 +507,6 @@ body > .container {
         grid-template-columns: 1fr;
     }
     
-    #hass-settings,
     #unifi-settings {
         grid-template-columns: 1fr;
     }

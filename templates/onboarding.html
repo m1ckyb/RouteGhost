@@ -23,10 +23,6 @@
                 <div class="step-number">3</div>
                 <div class="step-name">Firewall</div>
             </div>
-            <div class="progress-step" data-step="4">
-                <div class="step-number">4</div>
-                <div class="step-name">Home Assistant</div>
-            </div>
         </div>
         
         <form id="onboarding-form" method="POST" action="/onboarding/complete">
@@ -167,36 +163,6 @@
                         <input type="text" id="TRAEFIK_LAN_CIDR" name="TRAEFIK_LAN_CIDR" 
                                value="{{ settings.get('TRAEFIK_LAN_CIDR', '') }}"
                                placeholder="192.168.50.0/24">
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Step 4: Home Assistant Settings -->
-            <div class="onboarding-step" data-step="4" style="display: none;">
-                <h3>🏠 Home Assistant Settings</h3>
-                <p>Optionally integrate with Home Assistant for automation.</p>
-                
-                <div class="form-group">
-                    <label for="HASS_ENABLED">Enable Home Assistant Integration</label>
-                    <select id="HASS_ENABLED" name="HASS_ENABLED" onchange="toggleOnboardingHomeAssistant()">
-                        <option value="0" {% if settings.get('HASS_ENABLED', '0') == '0' %}selected{% endif %}>Disabled</option>
-                        <option value="1" {% if settings.get('HASS_ENABLED', '0') == '1' %}selected{% endif %}>Enabled</option>
-                    </select>
-                    <small>Turn this on to update Home Assistant entities with service status</small>
-                </div>
-                
-                <div id="onboarding-hass-settings" style="{% if settings.get('HASS_ENABLED', '0') == '0' %}display: none;{% endif %}">
-                    <div class="form-group">
-                        <label for="HASS_URL">Home Assistant URL</label>
-                        <input type="text" id="HASS_URL" name="HASS_URL" 
-                               value="{{ settings.get('HASS_URL', '') }}"
-                               placeholder="http://homeassistant.local:8123">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="HASS_TOKEN">Home Assistant Token</label>
-                        <input type="password" id="HASS_TOKEN" name="HASS_TOKEN" 
-                               value="{{ settings.get('HASS_TOKEN', '') }}" autocomplete="off">
                     </div>
                 </div>
             </div>
@@ -352,7 +318,7 @@
 
 <script>
 let currentStep = 1;
-const totalSteps = 4;
+const totalSteps = 3;
 
 function showStep(step) {
     // Hide all steps
@@ -418,17 +384,6 @@ function toggleOnboardingFirewall() {
         unifiSettings.style.display = 'block';
     } else {
         unifiSettings.style.display = 'none';
-    }
-}
-
-function toggleOnboardingHomeAssistant() {
-    const enabled = document.getElementById('HASS_ENABLED').value === '1';
-    const hassSettings = document.getElementById('onboarding-hass-settings');
-    
-    if (enabled) {
-        hassSettings.style.display = 'block';
-    } else {
-        hassSettings.style.display = 'none';
     }
 }
 

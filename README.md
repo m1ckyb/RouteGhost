@@ -15,7 +15,6 @@ A security-focused Python application to temporarily expose local services (Jell
     *   **Traefik**: Dynamic routing via Redis.
     *   **UniFi**: Automatic Port Forwarding management.
     *   **MQTT**: Real-time state updates and Home Assistant Auto Discovery.
-    *   **Home Assistant**: Entity state updates via API.
 *   **Diagnostics**: Built-in tools to verify DNS, Traefik, and Firewall status.
 
 ## 🚀 Quick Start
@@ -99,7 +98,6 @@ Configure these in the Web UI (`/settings`):
 | **Traefik/Redis** | Host, Port, Password |
 | **UniFi** | Host, Credentials, Port Forward Rule Name |
 | **MQTT** | Host, Port, Username, Password, Discovery Prefix |
-| **Home Assistant** | URL, Access Token, Entity ID (Optional) |
 
 ## 📖 Usage
 

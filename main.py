@@ -144,7 +144,6 @@ def migrate_env_to_db():
     env_keys = [
         "CF_API_TOKEN", "CF_ZONE_ID", "DOMAIN_ROOT", "ORIGIN_RULE_NAME",
         "REDIS_HOST", "REDIS_PORT", "REDIS_PASS",
-        "HASS_URL", "HASS_ENTITY_ID", "HASS_TOKEN",
         "UNIFI_HOST", "UNIFI_USER", "UNIFI_PASS", "UNIFI_RULE_NAME"
     ]
     
@@ -180,14 +179,6 @@ def migrate_env_to_db():
             db.set_setting("FIREWALL_TYPE", "unifi")
         else:
             db.set_setting("FIREWALL_TYPE", "none")
-        migrated = True
-    
-    if not db.get_setting("HASS_ENABLED"):
-        # Default to enabled if HASS_URL is set, otherwise disabled
-        if db.get_setting("HASS_URL"):
-            db.set_setting("HASS_ENABLED", "1")
-        else:
-            db.set_setting("HASS_ENABLED", "0")
         migrated = True
     
     if migrated:
@@ -607,47 +598,6 @@ def should_delete_dns_record(record_name, subdomain_prefix, current_hostname=Non
     subdomain = record_name.split('.')[0] if '.' in record_name else record_name
     
     return subdomain.startswith(expected_prefix)
-
-def update_hass(state, service_name="Service", hass_entity_id=None):
-    # Check if Home Assistant integration is enabled
-    hass_enabled = get_setting("HASS_ENABLED", required=False)
-    if hass_enabled == "0":
-        return  # HA integration disabled
-    
-    hass_url = get_setting("HASS_URL", required=False)
-    hass_token = get_setting("HASS_TOKEN", required=False)
-    
-    # Check if entity ID is provided for this service
-    if not hass_entity_id:
-        return # Skip if no entity ID provided
-    
-    # Strip whitespace - if result is empty/None, skip HA update
-    hass_entity_id = hass_entity_id.strip() if hass_entity_id else None
-
-    # Explicitly check for "None" or "null" strings
-    if hass_entity_id and hass_entity_id.lower() in ["none", "null"]:
-        return
-
-    # Validate entity ID format before sending request
-    if hass_entity_id and '.' not in hass_entity_id:
-        print(f"❌ Invalid Home Assistant entity ID format: '{hass_entity_id}'. Skipping update.")
-        return
-    
-    if not hass_url or not hass_entity_id or not hass_token:
-        return  # HA integration disabled or not configured
-    
-    headers = {"Authorization": f"Bearer {hass_token}", "Content-Type": "application/json"}
-    try:
-        response = requests.post(
-            f"{hass_url}/api/states/{hass_entity_id}",
-            headers=headers,
-            json={"state": state, "attributes": {"service": service_name}},
-            timeout=5
-        )
-        if response.status_code not in [200, 201]:
-            print(f"❌ Failed to update HA (Status {response.status_code}): {response.text}")
-    except Exception as e:
-        print(f"❌ HA Connection Failed: {e}")
 
 # Global cache for UniFi status to prevent API spamming
 UNIFI_STATUS_CACHE = {
@@ -1554,12 +1504,8 @@ def turn_off_service(service_id, actor=None):
             else:
                 print(f"   No Origin Rule found to clean up.")
 
-    print("🔹 Updating Home Assistant...")
-    update_hass("Disabled", service['name'], service.get('hass_entity_id'))
-    
     # Update database - clear hostname and port
     db.update_service_status(service_id, False, None, None)
-
     # Update MQTT
     mqtt_manager.publish_state(service_id, False, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
     
@@ -1896,12 +1842,8 @@ def turn_on_service(service_id, force=False, actor=None):
     r.set(f"traefik/http/routers/{router_name}/tls/certResolver", "main")
     r.set(f"traefik/http/services/{service_name}/loadbalancer/servers/0/url", target_url)
 
-    print("🔹 Updating Home Assistant...")
-    update_hass(f"https://{full_hostname}", service['name'], service.get('hass_entity_id'))
-    
     # Update database with hostname and port
     db.update_service_status(service_id, True, full_hostname, random_port)
-
     # Update MQTT
     mqtt_manager.publish_state(service_id, True, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
 
@@ -2740,7 +2682,6 @@ def onboarding():
 ALLOWED_USER_SETTINGS = {
     'CF_API_TOKEN', 'CF_ZONE_ID', 'DOMAIN_ROOT', 'ORIGIN_RULE_NAME',
     'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASS',
-    'HASS_URL', 'HASS_TOKEN', 'HASS_ENABLED', 'HASS_ENTITY_ID',
     'UNIFI_HOST', 'UNIFI_USER', 'UNIFI_PASS', 'UNIFI_RULE_NAME',
     'FIREWALL_TYPE', 'UNIFI_IP_GROUP_NAME', 'UNIFI_PORT_GROUP_NAME',
     'TRAEFIK_LAN_CIDR',
@@ -2800,18 +2741,12 @@ def new_service():
             show_regex = 1 if request.form.get('show_regex') else 0
             routing_mode = request.form.get('routing_mode', 'unifi')
             
-            # Clean hass_entity_id: strip whitespace and treat "None" as empty
-            hass_id = request.form.get('hass_entity_id', '').strip()
-            if not hass_id or hass_id.lower() == 'none':
-                hass_id = None
-
             new_id = db.add_service(
                 name=name,
                 router_name=router_name,
                 service_name=service_name,
                 target_url=target_url,
                 subdomain_prefix=subdomain_prefix,
-                hass_entity_id=hass_id,
                 random_suffix=random_suffix,
                 show_regex=show_regex,
                 routing_mode=routing_mode
@@ -2854,11 +2789,6 @@ def edit_service(service_id):
             show_regex = 1 if request.form.get('show_regex') else 0
             routing_mode = request.form.get('routing_mode', 'unifi')
             
-            # Clean hass_entity_id: strip whitespace and treat "None" as empty
-            hass_id = request.form.get('hass_entity_id', '').strip()
-            if not hass_id or hass_id.lower() == 'none':
-                hass_id = None
-
             db.update_service(
                 service_id,
                 name=name,
@@ -2866,7 +2796,6 @@ def edit_service(service_id):
                 service_name=service_name,
                 target_url=target_url,
                 subdomain_prefix=subdomain_prefix,
-                hass_entity_id=hass_id,
                 random_suffix=random_suffix,
                 show_regex=show_regex,
                 routing_mode=routing_mode
@@ -3598,36 +3527,6 @@ def test_vps_ssh():
         return jsonify({"message": message})
     else:
         return jsonify({"error": message}), 500
-
-@app.route('/api/test/hass', methods=['POST'])
-@login_required
-def api_test_hass():
-    """Test Home Assistant connection with provided credentials."""
-    data = request.get_json(silent=True) or {}
-    url = data.get('url')
-    token = data.get('token')
-    
-    if not url or not token:
-        return jsonify({"error": "URL and Token are required"}), 400
-        
-    try:
-        # Remove trailing slash if present
-        if url.endswith('/'):
-            url = url[:-1]
-            
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        # /api/ is a basic endpoint that returns {"message": "API running."}
-        response = requests.get(f"{url}/api/", headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            return jsonify({"success": True, "message": "Home Assistant connection successful!"})
-        else:
-            return jsonify({"error": f"Connection failed: HTTP {response.status_code}"}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
 
 @app.route('/api/test/cloudflare', methods=['POST'])
 @login_required

@@ -430,43 +430,6 @@
         <!-- Tab: Integrations -->
         <div id="tab-integrations" class="tab-content" style="display: none;">
         <div class="form-group heading-with-switch">
-            <h3 style="margin-bottom: 0;">Home Assistant</h3>
-            <div class="switch-75">
-                <label class="switch">
-                    <input type="checkbox" id="hass-toggle" {% if settings.get('HASS_ENABLED', '0') == '1' %}checked{% endif %}>
-                    <span class="slider round"></span>
-                </label>
-            </div>
-            <select id="HASS_ENABLED" name="HASS_ENABLED" onchange="toggleHomeAssistantSettings()" style="display: none;">
-                <option value="0" {% if settings.get('HASS_ENABLED', '0') == '0' %}selected{% endif %}>Disabled</option>
-                <option value="1" {% if settings.get('HASS_ENABLED', '0') == '1' %}selected{% endif %}>Enabled</option>
-            </select>
-        </div>
-        <p class="help-text" style="font-size: 0.85rem; color: var(--text-dim); margin-top: -1rem; margin-bottom: 1.5rem;">
-            Update Home Assistant entities with service status 
-            <span class="tooltip-icon" data-tooltip="Update Home Assistant entities with service status">ℹ️</span>
-        </p>
-        
-        <div id="hass-settings" style="{% if settings.get('HASS_ENABLED', '1') == '0' %}display: none;{% else %}display: grid;{% endif %}">
-            <div class="form-group">
-                <label for="HASS_URL">Home Assistant URL <span class="tooltip-icon" data-tooltip="URL of your Home Assistant instance">ℹ️</span></label>
-                <input type="url" id="HASS_URL" name="HASS_URL" 
-                       value="{{ settings.get('HASS_URL', '') }}"
-                       placeholder="http://homeassistant.local:8123">
-            </div>
-            
-            <div class="form-group">
-                <label for="HASS_TOKEN">Home Assistant Token <span class="tooltip-icon" data-tooltip="Long-Lived Access Token from Home Assistant">ℹ️</span></label>
-                <input type="password" id="HASS_TOKEN" name="HASS_TOKEN" 
-                       value="{{ settings.get('HASS_TOKEN', '') }}" autocomplete="off">
-            </div>
-
-            <div class="form-group">
-                <button type="button" class="btn btn-secondary" onclick="testHassConnection(event)">🔌 Test HA Connection</button>
-            </div>
-        </div>
-        
-        <div class="form-group heading-with-switch" style="margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 2rem;">
             <h3 style="margin-bottom: 0;">MQTT</h3>
             <div class="switch-75">
                 <label class="switch">
@@ -1062,44 +1025,6 @@ async function clearRedisRoutes() {
     }
 }
 
-async function testHassConnection(event) {
-    const url = document.getElementById('HASS_URL').value;
-    const token = document.getElementById('HASS_TOKEN').value;
-    
-    if (!url || !token) {
-        showToast('Please enter Home Assistant URL and Token', 'warning');
-        return;
-    }
-    
-    const btn = event.target;
-    const originalText = btn.textContent;
-    btn.textContent = 'Testing...';
-    btn.disabled = true;
-    
-    try {
-        const response = await fetch('/api/test/hass', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({url: url, token: token})
-        });
-        
-        const data = await response.json();
-        if (response.ok) {
-            showToast(data.message, 'success');
-        } else {
-            showToast(data.error || 'Connection failed', 'error');
-        }
-    } catch (e) {
-        showToast('Error: ' + e.message, 'error');
-    } finally {
-        btn.textContent = originalText;
-        btn.disabled = false;
-    }
-}
-
 async function testCloudflareConnection(event) {
     const token = document.getElementById('CF_API_TOKEN').value;
     const zoneId = document.getElementById('CF_ZONE_ID').value;
@@ -1173,17 +1098,6 @@ async function restoreSettings() {
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
-    }
-}
-
-function toggleHomeAssistantSettings() {
-    const enabled = document.getElementById('HASS_ENABLED').value === '1';
-    const hassSettings = document.getElementById('hass-settings');
-    
-    if (enabled) {
-        hassSettings.style.display = 'grid';
-    } else {
-        hassSettings.style.display = 'none';
     }
 }
 
@@ -1314,17 +1228,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const darkModeToggle = document.getElementById('dark_mode_toggle');
     if (darkModeToggle) {
         darkModeToggle.checked = document.documentElement.classList.contains('dark-mode');
-    }
-
-    // Link HASS toggle to hidden select
-    const hassToggle = document.getElementById('hass-toggle');
-    if (hassToggle) {
-        const hassEnabledSelect = document.getElementById('HASS_ENABLED');
-        hassToggle.addEventListener('change', function() {
-            hassEnabledSelect.value = this.checked ? '1' : '0';
-            // Manually trigger change event on the select to run toggleHomeAssistantSettings()
-            hassEnabledSelect.dispatchEvent(new Event('change'));
-        });
     }
 
     // Link MQTT toggle to hidden select

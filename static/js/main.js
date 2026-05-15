@@ -313,14 +313,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 5000);
     });
     
-    // Attach event listeners to HA settings buttons
-    document.querySelectorAll('.btn-icon[data-service-id]').forEach(button => {
-        button.addEventListener('click', function(event) {
-            event.preventDefault();
-            showHassModal(this.dataset.serviceId, this.dataset.serviceName);
-        });
-    });
-    
     // Attach event listeners to regex patterns
     document.querySelectorAll('.regex-pattern[data-regex]').forEach(element => {
         // Populate the visible text from data attribute to avoid duplication
@@ -331,120 +323,11 @@ document.addEventListener('DOMContentLoaded', function() {
             copyToClipboard(this.dataset.regex, 'Regex pattern copied to clipboard!');
         });
     });
-    
-    // Attach event listener to modal close button
-    const modalCloseBtn = document.getElementById('modal-close-btn');
-    if (modalCloseBtn) {
-        modalCloseBtn.addEventListener('click', closeHassModal);
-    }
-    
-    // Attach event listener to copy button in modal
-    const copyHassConfigBtn = document.getElementById('copy-hass-config-btn');
-    if (copyHassConfigBtn) {
-        copyHassConfigBtn.addEventListener('click', copyHassConfig);
-    }
-    
-    // Attach event listener to Base URL input
-    const hassBaseUrlInput = document.getElementById('hass-base-url');
-    if (hassBaseUrlInput) {
-        hassBaseUrlInput.addEventListener('input', updateHassConfig);
-    }
 });
-
-// Home Assistant Modal functions
-function showHassModal(serviceId, serviceName) {
-    const modal = document.getElementById('hassModal');
-    
-    // Store context in modal dataset
-    modal.dataset.serviceId = serviceId;
-    modal.dataset.serviceName = serviceName;
-    
-    // Set default Base URL if empty
-    const baseUrlInput = document.getElementById('hass-base-url');
-    if (!baseUrlInput.value) {
-        baseUrlInput.value = window.location.origin;
-    }
-    
-    updateHassConfig();
-    
-    modal.style.display = 'block';
-}
-
-async function saveHassBaseUrl() {
-    const baseUrl = document.getElementById('hass-base-url').value.trim();
-    if (!baseUrl) {
-        showToast('Base URL cannot be empty', 'warning');
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCsrfToken()
-            },
-            body: JSON.stringify({
-                key: 'HASS_BASE_URL',
-                value: baseUrl
-            })
-        });
-        
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Base URL saved as default', 'success');
-            updateHassConfig();
-        } else {
-            showToast('Error: ' + data.error, 'error');
-        }
-    } catch (e) {
-        showToast('Error: ' + e.message, 'error');
-    }
-}
-
-function updateHassConfig() {
-    const modal = document.getElementById('hassModal');
-    const serviceId = modal.dataset.serviceId;
-    const serviceName = modal.dataset.serviceName;
-    const baseUrl = document.getElementById('hass-base-url').value.replace(/\/$/, ''); // Remove trailing slash
-    
-    // Sanitize service name for YAML - remove special characters and normalize spaces
-    const serviceNameSlug = serviceName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    const safeServiceName = serviceName.replace(/['"]/g, ''); // Remove quotes from display name
-    
-    // Generate the Home Assistant YAML configuration
-    const jinjaOpen = '{{';
-    const jinjaClose = '}}';
-    
-    // Note: serviceId is always numeric (INTEGER PRIMARY KEY from database)
-    const hassConfig = `- switch:
-    command_on: "curl -X POST -s -H 'X-API-Key: your-api-key-here' ${baseUrl}/api/services/${serviceId}/on"
-    command_off: "curl -X POST -s -H 'X-API-Key: your-api-key-here' ${baseUrl}/api/services/${serviceId}/off"
-    command_state: "curl -s -H 'X-API-Key: your-api-key-here' ${baseUrl}/api/services/${serviceId}/status"
-    value_template: "${jinjaOpen} value_json.status == 'ONLINE' ${jinjaClose}"
-    unique_id: "traefik_${serviceNameSlug}"
-    name: "traefik ${safeServiceName}"`;
-    
-    document.getElementById('hassConfig').textContent = hassConfig;
-}
-
-function closeHassModal() {
-    document.getElementById('hassModal').style.display = 'none';
-}
-
-function copyHassConfig() {
-    const config = document.getElementById('hassConfig').textContent;
-    copyToClipboard(config, 'Configuration copied to clipboard!');
-}
 
 // Close modal when clicking outside
 window.addEventListener('click', function(event) {
-    const hassModal = document.getElementById('hassModal');
     const diagnosticsModal = document.getElementById('diagnosticsModal');
-    
-    if (event.target === hassModal) {
-        closeHassModal();
-    }
     
     if (event.target === diagnosticsModal) {
         closeDiagnosticsModal();

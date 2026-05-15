@@ -20,7 +20,6 @@ def init_db():
                 service_name TEXT NOT NULL,
                 target_url TEXT NOT NULL,
                 subdomain_prefix TEXT NOT NULL,
-                hass_entity_id TEXT,
                 random_suffix INTEGER DEFAULT 1,
                 enabled INTEGER DEFAULT 0,
                 current_hostname TEXT,
@@ -212,25 +211,25 @@ def get_service_by_router_name(router_name):
         row = cursor.fetchone()
         return dict(row) if row else None
 
-def add_service(name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1, routing_mode='unifi'):
+def add_service(name, router_name, service_name, target_url, subdomain_prefix, random_suffix=1, show_regex=1, routing_mode='unifi'):
     """Add a new service."""
     with get_db() as conn:
         cursor = conn.execute("""
-            INSERT INTO services (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode))
+            INSERT INTO services (name, router_name, service_name, target_url, subdomain_prefix, random_suffix, show_regex, routing_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (name, router_name, service_name, target_url, subdomain_prefix, random_suffix, show_regex, routing_mode))
         conn.commit()
         return cursor.lastrowid
 
-def update_service(service_id, name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id=None, random_suffix=1, show_regex=1, routing_mode='unifi'):
+def update_service(service_id, name, router_name, service_name, target_url, subdomain_prefix, random_suffix=1, show_regex=1, routing_mode='unifi'):
     """Update an existing service."""
     with get_db() as conn:
         conn.execute("""
             UPDATE services 
             SET name = ?, router_name = ?, service_name = ?, target_url = ?, 
-                subdomain_prefix = ?, hass_entity_id = ?, random_suffix = ?, show_regex = ?, routing_mode = ?, updated_at = CURRENT_TIMESTAMP
+                subdomain_prefix = ?, random_suffix = ?, show_regex = ?, routing_mode = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (name, router_name, service_name, target_url, subdomain_prefix, hass_entity_id, random_suffix, show_regex, routing_mode, service_id))
+        """, (name, router_name, service_name, target_url, subdomain_prefix, random_suffix, show_regex, routing_mode, service_id))
         conn.commit()
 
 def delete_service(service_id):

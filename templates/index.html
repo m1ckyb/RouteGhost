@@ -35,11 +35,6 @@
                     {% endif %}
                 </span>
                 <a href="/services/{{ service.id }}/edit" class="btn-icon" title="Edit Service">✏️</a>
-                {% if service.hass_entity_id %}
-                <button class="btn-icon" data-service-id="{{ service.id }}" data-service-name="{{ service.name }}" title="Home Assistant Settings">
-                    🏠
-                </button>
-                {% endif %}
                 <button class="btn-icon btn-danger" data-service-name="{{ service.name | e }}" onclick="deleteService({{ service.id }}, this.dataset.serviceName)" title="Delete Service">
                     🗑️
                 </button>
@@ -97,37 +92,6 @@
     <a href="/services/new" class="btn btn-primary">Add Your First Service</a>
 </div>
 {% endif %}
-
-<!-- Home Assistant Settings Modal -->
-<div id="hassModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Home Assistant Settings</h3>
-            <span class="modal-close" id="modal-close-btn">&times;</span>
-        </div>
-        <div class="modal-body">
-            <p class="modal-info">Here's the configuration for Home Assistant to control this service:</p>
-            
-            <div class="form-group" style="margin-bottom: 1rem;">
-                <label for="hass-base-url" style="display: block; margin-bottom: 0.5rem; font-weight: bold;">Base URL (App Address)</label>
-                <div style="display: flex; gap: 8px;">
-                    <input type="text" id="hass-base-url" name="hass_base_url_no_fill" autocomplete="off" data-lpignore="true" style="flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-input); color: var(--text);" value="{{ settings.get('HASS_BASE_URL', '') }}">
-                    <button type="button" class="btn btn-secondary" onclick="saveHassBaseUrl()">💾 Save</button>
-                </div>
-                <p class="help-text" style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.25rem;">
-                    Edit this if Home Assistant needs to connect via IP (e.g. <code>http://192.168.1.50:5001</code>) instead of domain.
-                </p>
-            </div>
-
-
-
-            <div class="code-block">
-                <pre id="hassConfig"></pre>
-            </div>
-            <button class="btn btn-secondary" id="copy-hass-config-btn">📋 Copy to Clipboard</button>
-        </div>
-    </div>
-</div>
 
 <!-- Diagnostics Modal -->
 <div id="diagnosticsModal" class="modal">
