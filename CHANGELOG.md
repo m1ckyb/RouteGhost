@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-05-16
+
+### Added
+- Settings UI: Added a "Test Connection" button for UniFi integration to validate credentials.
+
+### Changed
+- Settings UI: Reorganized Firewall Controller section to group action buttons at the bottom for better clarity.
+- Settings UI: Cleaned up redundant dividers and extra whitespace for a more consistent visual hierarchy.
+
+### Fixed
+- UI: Fixed rendering issues in the Settings page caused by stray HTML tags and redundant borders.
+
 ## [0.1.0] - 2026-05-16
 
 ### Removed
