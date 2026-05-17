@@ -112,7 +112,10 @@ Authenticate via browser session or `X-API-Key` header.
 *   `GET /api/status`: System status.
 *   `POST /api/services/{id}/on`: Enable service.
 *   `POST /api/services/{id}/off`: Disable service.
-*   `POST /api/services/{id}/rotate`: Rotate subdomain/port.
+*   `POST /api/services/{id}/rotate`: Rotate service subdomain (preserves port).
+*   `POST /api/services/all/on`: Enable all services.
+*   `POST /api/services/all/off`: Disable all services.
+*   `POST /api/firewall/rotate`: Rotate global firewall port.
 *   `GET /api/services/{id}/diagnose`: Run deep health checks.
 
 ## 🔐 Security & Auth
@@ -129,7 +132,7 @@ Authenticate via browser session or `X-API-Key` header.
                +-> [Redis/Traefik]
                +-> [Cloudflare API]
                +-> [UniFi API]
-               +-> [Home Assistant]
+               +-> [MQTT Broker] -> [Home Assistant]
 ```
 
 ## 📁 Data Persistence
