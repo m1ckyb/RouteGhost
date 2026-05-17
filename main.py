@@ -1518,12 +1518,12 @@ def turn_off_service(service_id, actor=None):
     print(f"✅ {service['name']} ACCESS DISABLED.\n")
     return {"message": f"{service['name']} disabled successfully"}
 
-def rotate_firewall_port():
+def rotate_firewall_port(actor=None):
     """
     Rotates the external firewall port for all active services without restarting them.
     Updates UniFi Port Forward and Cloudflare Origin Rule.
     """
-    print("\n🔄 === ROTATING FIREWALL PORT ===")
+    print(f"\n🔄 === ({actor if actor else 'System'}) ROTATING FIREWALL PORT ===")
     
     # 1. Check for active services
     services = db.get_all_services()
@@ -1600,7 +1600,7 @@ def rotate_firewall_port():
     print("✅ Firewall port rotated successfully.")
     return {"success": True, "port": new_port}
 
-def turn_on_service(service_id, force=False, actor=None):
+def turn_on_service(service_id, force=False, actor=None, preferred_port=None):
     """Turn on a specific service"""
     service = db.get_service(service_id)
     if not service:
@@ -1657,8 +1657,14 @@ def turn_on_service(service_id, force=False, actor=None):
         print(f"⚠️ Warning: Multiple different ports detected across active services: {active_service_ports}")
         print(f"   This may indicate a configuration issue. Using port from {active_service_with_port['name']}")
     
-    # Use existing port if available, otherwise generate new one
-    if active_service_with_port:
+    # Port Selection logic:
+    # 1. Use preferred_port if provided (e.g. from rotation)
+    # 2. Re-use existing port from another active service
+    # 3. Generate new random port
+    if preferred_port:
+        active_service_port = preferred_port
+        print(f"   Using preferred port: {active_service_port}")
+    elif active_service_with_port:
         active_service_port = active_service_with_port['current_port']
         print(f"   Reusing existing port from {active_service_with_port['name']}: {active_service_port}")
     else:
@@ -1895,8 +1901,8 @@ def turn_on_service(service_id, force=False, actor=None):
 
     return response
 
-def rotate_service(service_id):
-    """Rotate URL for a service (turn off then on)"""
+def rotate_service(service_id, actor=None):
+    """Rotate URL for a service (turn off then on) while preserving the port"""
     service = db.get_service(service_id)
     if not service:
         return {"error": "Service not found"}
@@ -1904,9 +1910,12 @@ def rotate_service(service_id):
     if not service['enabled']:
         return {"error": "Service is not currently enabled"}
     
-    print(f"\n🔄 === ROTATING {service['name']} ===")
-    turn_off_service(service_id)
-    return turn_on_service(service_id)
+    current_port = service.get('current_port')
+    print(f"\n🔄 === ROTATING {service['name']} (Actor: {actor if actor else 'System'}) ===")
+    print(f"🔹 Preserving port: {current_port}")
+    
+    turn_off_service(service_id, actor=actor)
+    return turn_on_service(service_id, actor=actor, preferred_port=current_port)
 
 # Legacy functions for backward compatibility with CLI
 # Removed cmd_off and cmd_on as they are no longer supported
@@ -3303,26 +3312,36 @@ def api_trigger_health_check():
     # Return the full status so the UI can update dynamically
     return jsonify(get_status())
 
-@app.route('/api/services/all/on', methods=['POST'])
-@api_key_or_login_required
-def api_turn_on_all():
+def turn_on_all(actor="System"):
+    """Turn on all configured services."""
     services = db.get_all_services()
     results = []
     for service in services:
         if not service['enabled']:
-            result = turn_on_service(service['id'])
+            result = turn_on_service(service['id'], actor=actor)
             results.append(result)
+    return results
+
+def turn_off_all(actor="System"):
+    """Turn off all configured services."""
+    services = db.get_all_services()
+    results = []
+    for service in services:
+        if service['enabled']:
+            result = turn_off_service(service['id'], actor=actor)
+            results.append(result)
+    return results
+
+@app.route('/api/services/all/on', methods=['POST'])
+@api_key_or_login_required
+def api_turn_on_all():
+    results = turn_on_all(actor=g.actor if hasattr(g, 'actor') else "API")
     return jsonify({"results": results})
 
 @app.route('/api/services/all/off', methods=['POST'])
 @api_key_or_login_required
 def api_turn_off_all():
-    services = db.get_all_services()
-    results = []
-    for service in services:
-        if service['enabled']:
-            result = turn_off_service(service['id'])
-            results.append(result)
+    results = turn_off_all(actor=g.actor if hasattr(g, 'actor') else "API")
     return jsonify({"results": results})
 
 @app.route('/api/sync-firewall', methods=['POST'])
@@ -3338,7 +3357,7 @@ def api_sync_firewall():
 @api_key_or_login_required
 def api_rotate_firewall_port():
     """Manually trigger a firewall port rotation."""
-    result = rotate_firewall_port()
+    result = rotate_firewall_port(actor=g.actor if hasattr(g, 'actor') else "API")
     if "error" in result:
         return jsonify(result), 400
     return jsonify(result)
@@ -3676,13 +3695,23 @@ def api_system_info():
         "database": db.get_db_stats()
     })
 
-def handle_mqtt_command(service_id, state):
+def handle_mqtt_command(service_id, action):
     """Callback for MQTT state changes."""
     with app.app_context():
-        if state:
-            turn_on_service(service_id, actor="MQTT")
+        if service_id == "global":
+            if action == "ALL_ON":
+                turn_on_all(actor="MQTT")
+            elif action == "ALL_OFF":
+                turn_off_all(actor="MQTT")
+            elif action == "ROTATE_PORT":
+                rotate_firewall_port(actor="MQTT")
         else:
-            turn_off_service(service_id, actor="MQTT")
+            if action == "ON":
+                turn_on_service(service_id, actor="MQTT")
+            elif action == "OFF":
+                turn_off_service(service_id, actor="MQTT")
+            elif action == "ROTATE":
+                rotate_service(service_id, actor="MQTT")
 
 # Initialize MQTT
 mqtt_manager.command_callback = handle_mqtt_command

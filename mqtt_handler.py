@@ -68,6 +68,10 @@ class MQTTHandler:
         with self._lock:
             if self.client:
                 print("🔹 Stopping MQTT client...")
+                try:
+                    self.remove_global_discovery()
+                except:
+                    pass
                 self.client.loop_stop()
                 self.client.disconnect()
                 self.client = None
@@ -90,28 +94,43 @@ class MQTTHandler:
 
     def on_message(self, client, userdata, msg):
         try:
-            # Topic format: routeghost/service/<service_id>/set
-            # We expect the topic structure to be consistent
             parts = msg.topic.split('/')
-            if len(parts) >= 4 and parts[0] == "routeghost" and parts[1] == "service" and parts[3] == "set":
-                service_id = int(parts[2])
+            if len(parts) >= 4 and parts[0] == "routeghost":
                 payload = msg.payload.decode().upper()
                 
-                if self.command_callback:
-                    if payload == "ON":
-                        print(f"🔹 MQTT Command: Turn ON Service {service_id}")
-                        self.command_callback(service_id, True)
-                    elif payload == "OFF":
-                        print(f"🔹 MQTT Command: Turn OFF Service {service_id}")
-                        self.command_callback(service_id, False)
+                # Service commands: routeghost/service/<service_id>/set
+                if parts[1] == "service" and parts[3] == "set":
+                    service_id = int(parts[2])
+                    if self.command_callback:
+                        if payload == "ON":
+                            print(f"🔹 MQTT Command: Turn ON Service {service_id}")
+                            self.command_callback(service_id, "ON")
+                        elif payload == "OFF":
+                            print(f"🔹 MQTT Command: Turn OFF Service {service_id}")
+                            self.command_callback(service_id, "OFF")
+                        elif payload == "ROTATE":
+                            print(f"🔹 MQTT Command: Rotate Service {service_id}")
+                            self.command_callback(service_id, "ROTATE")
+                
+                # Global commands: routeghost/global/set
+                elif parts[1] == "global" and parts[2] == "set":
+                    if self.command_callback:
+                        if payload in ["ALL_ON", "ALL_OFF", "ROTATE_PORT"]:
+                            print(f"🔹 MQTT Global Command: {payload}")
+                            self.command_callback("global", payload)
+
         except Exception as e:
             print(f"❌ Error handling MQTT message: {e}")
 
     def subscribe_all(self):
-        """Subscribe to command topics for all services."""
+        """Subscribe to command topics for all services and global commands."""
         if not self.client or not self.client.is_connected():
             return
             
+        # Subscribe to global commands
+        self.client.subscribe("routeghost/global/set")
+
+        # Subscribe to service commands
         services = db.get_all_services()
         for service in services:
             topic = f"routeghost/service/{service['id']}/set"
@@ -123,9 +142,9 @@ class MQTTHandler:
             return
 
         service_id = service['id']
-        safe_name = service['name'].lower().replace(" ", "_")
         unique_id = f"routeghost_service_{service_id}"
         
+        # 1. Switch for Service Control
         topic = f"{self.discovery_prefix}/switch/routeghost/{service_id}/config"
         
         payload = {
@@ -140,15 +159,80 @@ class MQTTHandler:
                 "name": "RouteGhost Manager",
                 "manufacturer": "RouteGhost",
                 "model": "RouteGhost Gateway",
-                "sw_version": "0.1.0" 
+                "sw_version": "0.1.1" 
             }
         }
         
         self.client.publish(topic, json.dumps(payload), retain=True)
+
+        # 2. Button for URL Rotation
+        rotate_topic = f"{self.discovery_prefix}/button/routeghost/{service_id}_rotate/config"
+        rotate_payload = {
+            "name": f"Rotate {service['name']} URL",
+            "unique_id": f"{unique_id}_rotate",
+            "command_topic": f"routeghost/service/{service_id}/set",
+            "payload_press": "ROTATE",
+            "icon": "mdi:refresh",
+            "availability_topic": "routeghost/status",
+            "device": {
+                "identifiers": ["routeghost_main"]
+            }
+        }
+        self.client.publish(rotate_topic, json.dumps(rotate_payload), retain=True)
         
         # Publish current state and attributes immediately
         is_active = service['enabled'] == 1
         self.publish_state(service, is_active)
+
+    def publish_global_discovery(self):
+        """Publish discovery for global buttons (Rotate Port, All On, All Off)."""
+        if not self.client or not self.client.is_connected():
+            return
+
+        # 1. Rotate Port Button
+        rotate_port_topic = f"{self.discovery_prefix}/button/routeghost/rotate_port/config"
+        rotate_port_payload = {
+            "name": "Rotate Firewall Port",
+            "unique_id": "routeghost_rotate_port",
+            "command_topic": "routeghost/global/set",
+            "payload_press": "ROTATE_PORT",
+            "icon": "mdi:shield-sync",
+            "availability_topic": "routeghost/status",
+            "device": {
+                "identifiers": ["routeghost_main"],
+                "name": "RouteGhost Manager",
+                "manufacturer": "RouteGhost",
+                "model": "RouteGhost Gateway",
+                "sw_version": "0.1.1"
+            }
+        }
+        self.client.publish(rotate_port_topic, json.dumps(rotate_port_payload), retain=True)
+
+        # 2. All On Button
+        all_on_topic = f"{self.discovery_prefix}/button/routeghost/all_on/config"
+        all_on_payload = {
+            "name": "Turn All Services ON",
+            "unique_id": "routeghost_all_on",
+            "command_topic": "routeghost/global/set",
+            "payload_press": "ALL_ON",
+            "icon": "mdi:play-all",
+            "availability_topic": "routeghost/status",
+            "device": { "identifiers": ["routeghost_main"] }
+        }
+        self.client.publish(all_on_topic, json.dumps(all_on_payload), retain=True)
+
+        # 3. All Off Button
+        all_off_topic = f"{self.discovery_prefix}/button/routeghost/all_off/config"
+        all_off_payload = {
+            "name": "Turn All Services OFF",
+            "unique_id": "routeghost_all_off",
+            "command_topic": "routeghost/global/set",
+            "payload_press": "ALL_OFF",
+            "icon": "mdi:stop-all",
+            "availability_topic": "routeghost/status",
+            "device": { "identifiers": ["routeghost_main"] }
+        }
+        self.client.publish(all_off_topic, json.dumps(all_off_payload), retain=True)
 
     def publish_all_discovery(self):
         """Publish discovery for all services and availability."""
@@ -157,6 +241,9 @@ class MQTTHandler:
             
         # Publish availability
         self.client.publish("routeghost/status", "online", retain=True)
+        
+        # Global buttons
+        self.publish_global_discovery()
         
         services = db.get_all_services()
         for service in services:
@@ -167,12 +254,26 @@ class MQTTHandler:
         if not self.client or not self.client.is_connected():
             return
 
+        # Clear Switch
         topic = f"{self.discovery_prefix}/switch/routeghost/{service_id}/config"
         self.client.publish(topic, "", retain=True)
+
+        # Clear Rotate Button
+        rotate_topic = f"{self.discovery_prefix}/button/routeghost/{service_id}_rotate/config"
+        self.client.publish(rotate_topic, "", retain=True)
         
         # Also clear state and attributes
         self.client.publish(f"routeghost/service/{service_id}/state", "", retain=True)
         self.client.publish(f"routeghost/service/{service_id}/attributes", "", retain=True)
+
+    def remove_global_discovery(self):
+        """Clear global button discovery."""
+        if not self.client or not self.client.is_connected():
+            return
+            
+        self.client.publish(f"{self.discovery_prefix}/button/routeghost/rotate_port/config", "", retain=True)
+        self.client.publish(f"{self.discovery_prefix}/button/routeghost/all_on/config", "", retain=True)
+        self.client.publish(f"{self.discovery_prefix}/button/routeghost/all_off/config", "", retain=True)
 
     def publish_state(self, service_dict_or_id, is_active, healthy=None):
         """Publish state update and attributes for a service."""
