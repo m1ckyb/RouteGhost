@@ -7,5 +7,6 @@
 - Settings UI: Reorganized Firewall Controller section to group action buttons at the bottom for better clarity.
 
 ### Fixed
+- UniFi: Improved API resilience by implementing robust retry logic for rate limits (429 errors) and optimized URL rotation to eliminate redundant controller requests.
 - MQTT: Fixed a bug where global MQTT commands (Rotate Port, All On/Off) were ignored due to a topic length check.
 - MQTT: Refactored URL rotation to feel more atomic and suppressed redundant "Shutdown/Enabling" banners during the rotation process.

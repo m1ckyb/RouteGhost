@@ -615,26 +615,30 @@ def logout_unifi(session, base_url):
     except:
         pass
 
+def unifi_request(session, method, url, **kwargs):
+    """Makes a request to UniFi with retry logic for rate limits (429)."""
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 15
+
+    for attempt in range(5):
+        try:
+            resp = session.request(method, url, **kwargs)
+            if resp.status_code == 429:
+                wait_time = (attempt + 1) * 4
+                print(f"   ⚠️ UniFi Rate Limit (429). Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            return resp
+        except (requests.exceptions.RequestException, socket.timeout) as e:
+            if attempt == 4:
+                print(f"❌ UniFi Request Failed: {e}")
+                return None
+            time.sleep(2)
+    return None
+
 def login_unifi_with_retry(session, base_url, username, password):
     """Logs into UniFi with retry logic for rate limits."""
-    for attempt in range(3):
-        try:
-            resp = session.post(f"{base_url}/api/auth/login", json={"username": username, "password": password}, timeout=10)
-            if resp.status_code == 200:
-                return resp
-            elif resp.status_code == 429:
-                if attempt < 2:
-                    wait_time = 2 * (attempt + 1)
-                    print(f"   ⚠️ UniFi Rate Limit (429). Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-            return resp
-        except Exception as e:
-            if attempt == 2:
-                print(f"❌ UniFi Connection Error: {e}")
-                return None
-            time.sleep(1)
-    return None
+    return unifi_request(session, "POST", f"{base_url}/api/auth/login", json={"username": username, "password": password})
 
 def sync_unifi_groups(session=None, base_url=None):
     """
@@ -725,7 +729,10 @@ def sync_unifi_groups(session=None, base_url=None):
             headers["X-CSRF-Token"] = session.headers.get("X-CSRF-Token")
 
         # Get Firewall Groups
-        resp = session.get(f"{base_url}/proxy/network/api/s/default/rest/firewallgroup", timeout=10)
+        resp = unifi_request(session, "GET", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup")
+        if not resp or resp.status_code != 200:
+            return
+            
         groups = resp.json().get("data", [])
         
         # Update IP Group
@@ -744,15 +751,15 @@ def sync_unifi_groups(session=None, base_url=None):
                 if "site_id" in ip_group:
                     payload["site_id"] = ip_group["site_id"]
 
-                resp = session.put(f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{ip_group['_id']}", json=payload, headers=headers)
-                if resp.status_code == 200:
+                resp = unifi_request(session, "PUT", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{ip_group['_id']}", json=payload, headers=headers)
+                if resp and resp.status_code == 200:
                     print(f"   Updated IP Group '{ip_group_name}': {list(desired_ips)}")
                     # Verification with retry for eventual consistency
                     verified = False
                     for attempt in range(3):
                         time.sleep(2) # Wait for propagation
-                        verify_resp = session.get(f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{ip_group['_id']}")
-                        if verify_resp.status_code == 200:
+                        verify_resp = unifi_request(session, "GET", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{ip_group['_id']}")
+                        if verify_resp and verify_resp.status_code == 200:
                             verified_data = verify_resp.json().get("data", [{}])[0]
                             current_members_after_update = set(verified_data.get("members", []) or verified_data.get("group_members", []))
                             if current_members_after_update == desired_ips:
@@ -762,11 +769,12 @@ def sync_unifi_groups(session=None, base_url=None):
                             else:
                                 print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
                         else:
-                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details (HTTP {verify_resp.status_code}).")
+                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
                     if not verified:
                         print(f"   ❌ Verification failed for IP Group '{ip_group_name}' after multiple attempts.")
                 else:
-                    print(f"   ❌ Failed to update IP Group '{ip_group_name}': {resp.status_code} - {resp.text}")
+                    msg = resp.text if resp else "No response"
+                    print(f"   ❌ Failed to update IP Group '{ip_group_name}': {msg}")
         else:
             print(f"   ⚠️ Warning: IP Group '{ip_group_name}' not found in UniFi")
             
@@ -786,15 +794,15 @@ def sync_unifi_groups(session=None, base_url=None):
                 if "site_id" in port_group:
                     payload["site_id"] = port_group["site_id"]
 
-                resp = session.put(f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{port_group['_id']}", json=payload, headers=headers)
-                if resp.status_code == 200:
+                resp = unifi_request(session, "PUT", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{port_group['_id']}", json=payload, headers=headers)
+                if resp and resp.status_code == 200:
                     print(f"   Updated Port Group '{port_group_name}': {list(desired_ports)}")
                     # Verification with retry for eventual consistency
                     verified = False
                     for attempt in range(3):
                         time.sleep(2) # Wait for propagation
-                        verify_resp = session.get(f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{port_group['_id']}")
-                        if verify_resp.status_code == 200:
+                        verify_resp = unifi_request(session, "GET", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{port_group['_id']}")
+                        if verify_resp and verify_resp.status_code == 200:
                             verified_data = verify_resp.json().get("data", [{}])[0]
                             current_members_after_update = set(verified_data.get("members", []) or verified_data.get("group_members", []))
                             if current_members_after_update == desired_ports:
@@ -804,11 +812,12 @@ def sync_unifi_groups(session=None, base_url=None):
                             else:
                                 print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
                         else:
-                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details (HTTP {verify_resp.status_code}).")
+                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
                     if not verified:
                         print(f"   ❌ Verification failed for Port Group '{port_group_name}' after multiple attempts.")
                 else:
-                    print(f"   ❌ Failed to update Port Group '{port_group_name}': {resp.status_code} - {resp.text}")
+                    msg = resp.text if resp else "No response"
+                    print(f"   ❌ Failed to update Port Group '{port_group_name}': {msg}")
         else:
             print(f"   ⚠️ Warning: Port Group '{port_group_name}' not found in UniFi")
             
@@ -1088,7 +1097,9 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
     pf_url = f"{base_url}/proxy/network/api/s/default/rest/portforward"
     
     try:
-        resp = session.get(pf_url, timeout=10)
+        resp = unifi_request(session, "GET", pf_url)
+        if not resp or resp.status_code != 200:
+            return False
         rules = resp.json().get("data", [])
     except Exception as e:
         print(f"❌ Error fetching rules: {e}")
@@ -1122,13 +1133,14 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
 
     try:
         rule_id = target_rule["_id"]
-        resp = session.put(f"{pf_url}/{rule_id}", json=target_rule, timeout=10)
+        resp = unifi_request(session, "PUT", f"{pf_url}/{rule_id}", json=target_rule)
         
-        if resp.status_code == 200:
+        if resp and resp.status_code == 200:
             print(f"✅ UniFi Rule '{unifi_rule_name}' updated: {', '.join(changes)}.")
             return True
         else:
-            print(f"❌ Failed to update rule: {resp.text}")
+            msg = resp.text if resp else "No response"
+            print(f"❌ Failed to update rule: {msg}")
             return False
     except Exception as e:
         print(f"❌ Error updating rule: {e}")
@@ -1362,7 +1374,7 @@ def get_service_status(service_id):
             "service": service
         }
 
-def turn_off_service(service_id, actor=None, quiet=False):
+def turn_off_service(service_id, actor=None, quiet=False, skip_unifi=False):
     """Turn off a specific service"""
     service = db.get_service(service_id)
     if not service:
@@ -1401,7 +1413,7 @@ def turn_off_service(service_id, actor=None, quiet=False):
     unifi_session = None
     unifi_base_url = None
 
-    if routing_mode == 'unifi':
+    if routing_mode == 'unifi' and not skip_unifi:
         # Prepare UniFi Session for multiple operations
         unifi_host = get_setting("UNIFI_HOST", required=False)
         unifi_user = get_setting("UNIFI_USER", required=False)
@@ -1511,7 +1523,7 @@ def turn_off_service(service_id, actor=None, quiet=False):
     mqtt_manager.publish_state(service_id, False, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
     
     # Sync UniFi Groups (remove this service's IP/Port if not used by others)
-    if routing_mode == 'unifi':
+    if routing_mode == 'unifi' and not skip_unifi:
         sync_unifi_groups(session=unifi_session, base_url=unifi_base_url)
         if unifi_session:
             logout_unifi(unifi_session, unifi_base_url)
@@ -1601,7 +1613,7 @@ def rotate_firewall_port(actor=None):
     print("✅ Firewall port rotated successfully.")
     return {"success": True, "port": new_port}
 
-def turn_on_service(service_id, force=False, actor=None, preferred_port=None, quiet=False):
+def turn_on_service(service_id, force=False, actor=None, preferred_port=None, quiet=False, skip_unifi=False):
     """Turn on a specific service"""
     service = db.get_service(service_id)
     if not service:
@@ -1679,7 +1691,7 @@ def turn_on_service(service_id, force=False, actor=None, preferred_port=None, qu
     unifi_session = None
     unifi_base_url = None
 
-    if routing_mode == 'unifi':
+    if routing_mode == 'unifi' and not skip_unifi:
         # Traditional Cloudflare + UniFi
         unifi_host = get_setting("UNIFI_HOST", required=False)
         unifi_user = get_setting("UNIFI_USER", required=False)
@@ -1856,7 +1868,7 @@ def turn_on_service(service_id, force=False, actor=None, preferred_port=None, qu
     mqtt_manager.publish_state(service_id, True, healthy=HEALTH_STATUS_CACHE.get(service_id, True))
 
     # Sync UniFi Groups (add this service's IP/Port)
-    if routing_mode == 'unifi':
+    if routing_mode == 'unifi' and not skip_unifi:
         sync_unifi_groups(session=unifi_session, base_url=unifi_base_url)
 
         # Check if port is open (brief delay to allow firewall rule to propagate)
@@ -1879,6 +1891,9 @@ def turn_on_service(service_id, force=False, actor=None, preferred_port=None, qu
             error_msg = port_check.get("error", "Unknown error")
             print(f"⚠️ Port verification failed: {error_msg}")
             port_status = "unverified"
+    elif routing_mode == 'unifi' and skip_unifi:
+        # If we skipped unifi because of rotation, assume port is still verified/ok
+        port_status = "verified" 
     else:
         # For VPS mode, we can't easily check port open status from here (it's remote)
         # unless we probe it from outside or trust the SSH command.
@@ -1916,8 +1931,10 @@ def rotate_service(service_id, actor=None):
     print(f"\n🔄 === ({actor if actor else 'System'}) ROTATING {service['name']} URL ===")
     print(f"🔹 Preserving port: {current_port}")
     
-    turn_off_service(service_id, actor=actor, quiet=True)
-    return turn_on_service(service_id, actor=actor, preferred_port=current_port, quiet=True)
+    # Skip UniFi work during rotation as the internal IP/Port didn't change 
+    # and the firewall port is being preserved.
+    turn_off_service(service_id, actor=actor, quiet=True, skip_unifi=True)
+    return turn_on_service(service_id, actor=actor, preferred_port=current_port, quiet=True, skip_unifi=True)
 
 # Legacy functions for backward compatibility with CLI
 # Removed cmd_off and cmd_on as they are no longer supported
