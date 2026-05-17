@@ -95,11 +95,11 @@ class MQTTHandler:
     def on_message(self, client, userdata, msg):
         try:
             parts = msg.topic.split('/')
-            if len(parts) >= 4 and parts[0] == "routeghost":
+            if len(parts) >= 3 and parts[0] == "routeghost":
                 payload = msg.payload.decode().upper()
                 
                 # Service commands: routeghost/service/<service_id>/set
-                if parts[1] == "service" and parts[3] == "set":
+                if len(parts) >= 4 and parts[1] == "service" and parts[3] == "set":
                     service_id = int(parts[2])
                     if self.command_callback:
                         if payload == "ON":

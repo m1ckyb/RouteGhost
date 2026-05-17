@@ -1362,7 +1362,7 @@ def get_service_status(service_id):
             "service": service
         }
 
-def turn_off_service(service_id, actor=None):
+def turn_off_service(service_id, actor=None, quiet=False):
     """Turn off a specific service"""
     service = db.get_service(service_id)
     if not service:
@@ -1379,7 +1379,8 @@ def turn_off_service(service_id, actor=None):
         print(f"ℹ️ ({actor}) {service['name']} is already offline. Ignoring request.")
         return {"message": f"{service['name']} is already offline"}
 
-    print(f"\n🛑 === ({actor}) SHUTTING DOWN {service['name']} ===")
+    if not quiet:
+        print(f"\n🛑 === ({actor}) SHUTTING DOWN {service['name']} ===")
     r = get_redis()
     if not r:
         return {"error": "Redis connection failed"}
@@ -1600,7 +1601,7 @@ def rotate_firewall_port(actor=None):
     print("✅ Firewall port rotated successfully.")
     return {"success": True, "port": new_port}
 
-def turn_on_service(service_id, force=False, actor=None, preferred_port=None):
+def turn_on_service(service_id, force=False, actor=None, preferred_port=None, quiet=False):
     """Turn on a specific service"""
     service = db.get_service(service_id)
     if not service:
@@ -1632,7 +1633,8 @@ def turn_on_service(service_id, force=False, actor=None, preferred_port=None):
         
         return response
     
-    print(f"\n🚀 === ({actor}) ENABLING {service['name']} ===")
+    if not quiet:
+        print(f"\n🚀 === ({actor}) ENABLING {service['name']} ===")
     
     # Determine Routing Mode
     routing_mode = routing.get_routing_mode(service)
@@ -1911,11 +1913,11 @@ def rotate_service(service_id, actor=None):
         return {"error": "Service is not currently enabled"}
     
     current_port = service.get('current_port')
-    print(f"\n🔄 === ROTATING {service['name']} (Actor: {actor if actor else 'System'}) ===")
+    print(f"\n🔄 === ({actor if actor else 'System'}) ROTATING {service['name']} URL ===")
     print(f"🔹 Preserving port: {current_port}")
     
-    turn_off_service(service_id, actor=actor)
-    return turn_on_service(service_id, actor=actor, preferred_port=current_port)
+    turn_off_service(service_id, actor=actor, quiet=True)
+    return turn_on_service(service_id, actor=actor, preferred_port=current_port, quiet=True)
 
 # Legacy functions for backward compatibility with CLI
 # Removed cmd_off and cmd_on as they are no longer supported
