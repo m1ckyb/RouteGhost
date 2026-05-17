@@ -47,13 +47,13 @@ python3 main.py serve
 
 RouteGhost supports two distinct architectural modes for exposing your services:
 
-### 1. Cloudflare Proxy + UniFi (Legacy)
+### 1. Cloudflare Proxy + UniFi
 The classic method using Cloudflare's global edge network.
 *   **Traffic Flow:** User -> Cloudflare (Orange Cloud) -> UniFi WAN (Port Forward) -> RouteGhost.
 *   **Pros:** DDOS protection, hides home IP behind Cloudflare.
 *   **Cons:** Requires opening ports on your firewall (automatically managed), relies on Cloudflare decryption.
 
-### 2. VPS Gateway + WireGuard (Ghost Mode)
+### 2. VPS Gateway + WireGuard
 Bypasses Cloudflare's proxy and your local firewall ingress entirely by tunneling traffic through a remote VPS.
 *   **Traffic Flow:** User -> VPS (Port Forward) -> WireGuard Tunnel -> RouteGhost.
 *   **Pros:** **Zero open ports** on home firewall, complete bypassing of residential CGNAT, encrypted tunnel, "Grey Cloud" DNS.
