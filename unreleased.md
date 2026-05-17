@@ -5,6 +5,7 @@
 
 ### Changed
 - Settings UI: Reorganized Firewall Controller section to group action buttons at the bottom for better clarity.
+- Dependencies: Updated `redis`, `requests`, `gunicorn`, `Flask-WTF`, and `paramiko` to newer versions in `requirements.txt`.
 
 ### Fixed
 - UniFi: Improved API resilience by implementing robust retry logic for rate limits (429 errors) and optimized URL rotation to eliminate redundant controller requests.
