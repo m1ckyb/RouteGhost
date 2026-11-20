@@ -1,7 +1,27 @@
 import json
+import os
 import threading
 import paho.mqtt.client as mqtt
 import database as db
+
+
+def _get_app_version():
+    """Read application version from VERSION.txt."""
+    try:
+        version_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION.txt")
+        if os.path.exists(version_path):
+            with open(version_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+    except OSError:
+        pass
+    return "unknown"
+
+
+def _create_mqtt_client():
+    """Create a paho-mqtt Client compatible with paho-mqtt 2.x without deprecation warnings."""
+    if hasattr(mqtt, "CallbackAPIVersion"):
+        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+    return mqtt.Client()
 
 class MQTTHandler:
     def __init__(self, command_callback=None):
@@ -45,7 +65,7 @@ class MQTTHandler:
                 self.stop()
 
             try:
-                self.client = mqtt.Client()
+                self.client = _create_mqtt_client()
                 if self.username:
                     self.client.username_pw_set(self.username, self.password)
                 
@@ -158,7 +178,7 @@ class MQTTHandler:
                 "name": "RouteGhost Manager",
                 "manufacturer": "RouteGhost",
                 "model": "RouteGhost Gateway",
-                "sw_version": "0.1.1" 
+                "sw_version": _get_app_version() 
             }
         }
         
@@ -202,7 +222,7 @@ class MQTTHandler:
                 "name": "RouteGhost Manager",
                 "manufacturer": "RouteGhost",
                 "model": "RouteGhost Gateway",
-                "sw_version": "0.1.1"
+                "sw_version": _get_app_version()
             }
         }
         self.client.publish(rotate_port_topic, json.dumps(rotate_port_payload), retain=True)

@@ -195,7 +195,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "Sh0rt!"},
+            json={"current_password": "StrongPass1!", "new_password": "Sh0rt!"},
         )
         assert resp.status_code == 400
         assert "8 characters" in resp.get_json()["error"]
@@ -209,7 +209,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "lowercase1!"},
+            json={"current_password": "StrongPass1!", "new_password": "lowercase1!"},
         )
         assert resp.status_code == 400
         assert "uppercase" in resp.get_json()["error"]
@@ -223,7 +223,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "UPPERCASE1!"},
+            json={"current_password": "StrongPass1!", "new_password": "UPPERCASE1!"},
         )
         assert resp.status_code == 400
         assert "lowercase" in resp.get_json()["error"]
@@ -237,7 +237,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "NoNumber!Here"},
+            json={"current_password": "StrongPass1!", "new_password": "NoNumber!Here"},
         )
         assert resp.status_code == 400
         assert "number" in resp.get_json()["error"]
@@ -251,7 +251,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "NoSpecial1"},
+            json={"current_password": "StrongPass1!", "new_password": "NoSpecial1"},
         )
         assert resp.status_code == 400
         assert "special" in resp.get_json()["error"]
@@ -265,7 +265,7 @@ class TestPasswordComplexity:
         )
         resp = client.post(
             "/auth/password/change",
-            json={"new_password": "NewValid2!"},
+            json={"current_password": "StrongPass1!", "new_password": "NewValid2!"},
         )
         assert resp.status_code == 200
         assert resp.get_json().get("success") is True

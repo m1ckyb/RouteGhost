@@ -1,5 +1,5 @@
-# Use a lightweight Python base image
-FROM python:alpine
+# Use a pinned lightweight Python base image
+FROM python:3.13-alpine
 
 # Set environment variables to prevent python from writing pyc files
 # and to flush stdout/stderr immediately
@@ -15,8 +15,8 @@ ARG PGID=1000
 
 # Create a non-root group and user with specific IDs
 RUN apk add --no-cache su-exec shadow tzdata wireguard-tools openresolv iproute2 openssh-client && \
-    addgroup -g 1000 appgroup && \
-    adduser -D -u 1000 -G appgroup appuser && \
+    addgroup -g ${PGID} appgroup && \
+    adduser -D -u ${PUID} -G appgroup appuser && \
     mkdir -p /app/data && \
     chown -R appuser:appgroup /app
 
@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application files
 COPY --chown=appuser:appgroup main.py .
 COPY --chown=appuser:appgroup database.py .
+COPY --chown=appuser:appgroup crypto_utils.py .
 COPY --chown=appuser:appgroup routing.py .
 COPY --chown=appuser:appgroup mqtt_handler.py .
 COPY --chown=appuser:appgroup logging_config.py .

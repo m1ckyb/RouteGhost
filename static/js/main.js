@@ -3,6 +3,38 @@ function getCsrfToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 }
 
+// Shared toast notification helper
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+
+    let icon = 'ℹ️';
+    if (type === 'success') icon = '✅';
+    if (type === 'error') icon = '❌';
+    if (type === 'warning') icon = '⚠️';
+
+    toast.innerHTML = `
+        <div class="toast-content">
+            <span>${icon}</span>
+            <span class="toast-message"></span>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+        <div class="toast-progress"></div>
+    `;
+    toast.querySelector('.toast-message').textContent = message;
+
+    container.prepend(toast);
+
+    setTimeout(() => {
+        toast.classList.add('closing');
+        toast.addEventListener('animationend', () => {
+            if (toast.parentElement) toast.remove();
+        });
+    }, 5000);
+}
+
 // Service control functions
 function updateServiceCard(card, data, enabled) {
     // Update Badge

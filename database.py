@@ -1,6 +1,7 @@
 import sqlite3
 import os
 from contextlib import contextmanager
+from crypto_utils import SENSITIVE_SETTINGS, encrypt_value, decrypt_value, is_encrypted
 
 # Use /app/data for Docker volume mounting, fall back to current directory
 DATA_DIR = os.environ.get('DATA_DIR', '/app/data' if os.path.exists('/app/data') else os.path.dirname(__file__))
@@ -10,6 +11,8 @@ DB_PATH = os.path.join(DATA_DIR, "config.db")
 def init_db():
     """Initialize the database schema."""
     with get_db() as conn:
+        # Enable WAL mode once (persists on the database file)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS services (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,10 +194,29 @@ def init_db():
             conn.rollback()
             raise
 
+    migrate_encrypt_sensitive_settings()
+
+def migrate_encrypt_sensitive_settings():
+    """Encrypt any existing plaintext sensitive settings and TOTP secrets at rest."""
+    with get_db() as conn:
+        for key in SENSITIVE_SETTINGS:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            if row and row['value'] and not is_encrypted(row['value']):
+                enc = encrypt_value(row['value'], DATA_DIR)
+                conn.execute(
+                    "UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?",
+                    (enc, key),
+                )
+        rows = conn.execute("SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL AND totp_secret != ''").fetchall()
+        for row in rows:
+            if not is_encrypted(row['totp_secret']):
+                enc = encrypt_value(row['totp_secret'], DATA_DIR)
+                conn.execute("UPDATE users SET totp_secret = ? WHERE id = ?", (enc, row['id']))
+        conn.commit()
+
 def _configure_connection(conn):
     """Apply standard pragmas to a new SQLite connection."""
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
 
@@ -268,19 +290,25 @@ def update_service_status(service_id, enabled, current_hostname=None, current_po
 
 # Settings CRUD operations
 def get_setting(key, default=None):
-    """Get a setting value."""
+    """Get a setting value (transparently decrypting sensitive settings)."""
     with get_db() as conn:
         cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = cursor.fetchone()
-        return row['value'] if row else default
+        if not row:
+            return default
+        val = row['value']
+        if key in SENSITIVE_SETTINGS:
+            return decrypt_value(val, DATA_DIR)
+        return val
 
 def set_setting(key, value):
-    """Set a setting value."""
+    """Set a setting value (encrypting sensitive settings at rest)."""
+    stored_value = encrypt_value(value, DATA_DIR) if (key in SENSITIVE_SETTINGS and value) else value
     with get_db() as conn:
         conn.execute("""
             INSERT INTO settings (key, value) VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
-        """, (key, value, value))
+        """, (key, stored_value, stored_value))
         conn.commit()
 
 def delete_setting(key):
@@ -290,31 +318,42 @@ def delete_setting(key):
         conn.commit()
 
 def get_all_settings():
-    """Get all settings as a dictionary."""
+    """Get all settings as a dictionary (transparently decrypting sensitive settings)."""
     with get_db() as conn:
         cursor = conn.execute("SELECT key, value FROM settings")
-        return {row['key']: row['value'] for row in cursor.fetchall()}
+        result = {}
+        for row in cursor.fetchall():
+            k, v = row['key'], row['value']
+            result[k] = decrypt_value(v, DATA_DIR) if k in SENSITIVE_SETTINGS else v
+        return result
+
+def _decrypt_user_row(row):
+    """Convert a user sqlite3.Row to dict and decrypt totp_secret if present."""
+    if not row:
+        return None
+    d = dict(row)
+    if d.get('totp_secret'):
+        d['totp_secret'] = decrypt_value(d['totp_secret'], DATA_DIR)
+    return d
 
 # User CRUD operations
 def get_user(user_id):
     """Get a specific user by ID."""
     with get_db() as conn:
         cursor = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        return _decrypt_user_row(cursor.fetchone())
 
 def get_user_by_username(username):
     """Get a specific user by username."""
     with get_db() as conn:
         cursor = conn.execute("SELECT * FROM users WHERE username = ?", (username,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        return _decrypt_user_row(cursor.fetchone())
 
 def get_all_users():
     """Get all users."""
     with get_db() as conn:
         cursor = conn.execute("SELECT * FROM users ORDER BY username")
-        return [dict(row) for row in cursor.fetchall()]
+        return [_decrypt_user_row(row) for row in cursor.fetchall()]
 
 def add_user(username):
     """Add a new user."""
@@ -350,13 +389,14 @@ def update_user_password(user_id, password_hash):
         conn.commit()
 
 def update_user_totp(user_id, totp_secret):
-    """Update user's TOTP secret."""
+    """Update user's TOTP secret (encrypted at rest)."""
+    stored = encrypt_value(totp_secret, DATA_DIR) if totp_secret else totp_secret
     with get_db() as conn:
         conn.execute("""
             UPDATE users 
             SET totp_secret = ?
             WHERE id = ?
-        """, (totp_secret, user_id))
+        """, (stored, user_id))
         conn.commit()
 
 def count_users():

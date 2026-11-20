@@ -5,8 +5,6 @@ import threading
 import signal
 import string
 import os
-import sys
-import builtins
 import logging
 import uuid
 import urllib3
@@ -14,7 +12,7 @@ from urllib.parse import urlparse
 import json
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 import ipaddress
@@ -24,6 +22,7 @@ from functools import wraps
 from dotenv import load_dotenv
 from logging_config import setup_logging, get_logger
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash, session, has_request_context, make_response, g
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
@@ -53,69 +52,11 @@ import database as db
 import routing
 from mqtt_handler import mqtt_manager
 
-# Import DATA_DIR for secret key storage
+# Import DATA_DIR and SENSITIVE_SETTINGS
 from database import DATA_DIR
-
-# --- LOGGING SETUP ---
-class Tee:
-    def __init__(self, *files):
-        self.files = files
-    def write(self, obj):
-        for f in self.files:
-            try:
-                f.write(obj)
-                f.flush()
-            except Exception:
-                pass
-    def flush(self):
-        for f in self.files:
-            try:
-                f.flush()
-            except Exception:
-                pass
+from crypto_utils import SENSITIVE_SETTINGS
 
 LOG_FILE = os.path.join(DATA_DIR, 'app.log')
-# Set up rotating log file and redirect stdout/stderr
-try:
-    from logging.handlers import RotatingFileHandler
-    
-    log_rotator = RotatingFileHandler(
-        LOG_FILE, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
-    )
-    # Write a startup marker
-    log_rotator.stream.write(f"--- Log Started at {time.ctime()} ---\n")
-    
-    sys.stdout = Tee(sys.stdout, log_rotator.stream)
-    sys.stderr = Tee(sys.stderr, log_rotator.stream)
-except Exception as e:
-    print(f"⚠️ Failed to setup logging: {e}")
-
-# Override print to include timestamps
-original_print = builtins.print
-def timestamped_print(*args, **kwargs):
-    file = kwargs.get('file', sys.stdout)
-    # Only add timestamp if printing to stdout/stderr (which are Tee objects)
-    if file in (sys.stdout, sys.stderr):
-        try:
-            ts = datetime.now().astimezone().strftime("[%Y-%m-%d %H:%M:%S %z]")
-        except Exception:
-            # Fallback if astimezone fails
-            ts = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        
-        sep = kwargs.get('sep', ' ')
-        msg = sep.join(map(str, args))
-        # Remove sep from kwargs as we handled it, to avoid double separator usage if we were passing multiple args
-        # But we are passing a single string, so sep is ignored by print for the content, 
-        # but we should keep it in kwargs if print uses it? print(obj, sep=...) 
-        # Actually print(single_obj, sep=...) sep is unused.
-        
-        original_print(f"{ts} {msg}", **kwargs)
-    else:
-        original_print(*args, **kwargs)
-
-builtins.print = timestamped_print
-
-# ---------------------
 
 # Suppress InsecureRequestWarning for UniFi self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -126,15 +67,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # Initialize database
 db.init_db()
 
-# Initialize structured logging
+# Initialize structured logging (single rotating file handler + stdout)
 setup_logging(log_dir=DATA_DIR)
 
 logger = get_logger("routeghost")
-
-# Constants
-# Settings are now stored in database and configured via web UI
-# No longer required at startup
-REQUIRED_SETTINGS = []
 
 def get_version():
     """Read version from VERSION.txt"""
@@ -387,24 +323,22 @@ def validate_target_url(url):
             if not addr_info:
                 raise ValueError(f"Cannot resolve hostname '{hostname}'")
             
-            # Get the first IP address (format is (family, type, proto, canonname, sockaddr))
-            # sockaddr is a tuple (address, port) for AF_INET or (address, port, flowinfo, scopeid) for AF_INET6
-            ip_str = addr_info[0][4][0]
-            ip_obj = ipaddress.ip_address(ip_str)
-            
-            # Block link-local (169.254.0.0/16, fe80::/10)
-            # These addresses are auto-assigned and shouldn't be used
-            if ip_obj.is_link_local:
-                raise ValueError("Link-local addresses (169.254.x.x, fe80::) are not allowed")
-            
-            # Block loopback (127.0.0.0/8, ::1)
-            # Prevents SSRF attacks against the RouteGhost server itself
-            if ip_obj.is_loopback:
-                raise ValueError("Loopback addresses (localhost, 127.x.x.x, ::1) are not allowed")
-            
-            # Block multicast
-            if ip_obj.is_multicast:
-                raise ValueError("Multicast addresses are not allowed")
+            # Validate ALL resolved IPs to prevent multi-record / dual-stack SSRF bypass
+            for entry in addr_info:
+                ip_str = entry[4][0]
+                ip_obj = ipaddress.ip_address(ip_str)
+                
+                # Block link-local (169.254.0.0/16, fe80::/10)
+                if ip_obj.is_link_local:
+                    raise ValueError("Link-local addresses (169.254.x.x, fe80::) are not allowed")
+                
+                # Block loopback (127.0.0.0/8, ::1)
+                if ip_obj.is_loopback:
+                    raise ValueError("Loopback addresses (localhost, 127.x.x.x, ::1) are not allowed")
+                
+                # Block multicast
+                if ip_obj.is_multicast:
+                    raise ValueError("Multicast addresses are not allowed")
             
             # Note: We allow private IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x, fd00::/8)
             # because this application is designed to proxy to internal services
@@ -423,6 +357,7 @@ def validate_target_url(url):
 
 # Locks for thread safety
 _cache_lock = threading.Lock()
+_auth_lock = threading.Lock()
 _service_ops_lock = threading.RLock()  # RLock because rotate_service calls turn_off + turn_on
 _shutdown_event = threading.Event()
 
@@ -465,7 +400,6 @@ def get_redis():
             decode_responses=True,
             socket_timeout=5,
             socket_connect_timeout=5,
-            retry_on_timeout=True,
         )
         client.ping()
         _redis_client = client
@@ -501,31 +435,32 @@ def get_public_ip():
 LOGIN_ATTEMPTS = {}
 
 def check_rate_limit(ip_address, limit=5, window=60):
-    """Simple in-memory rate limiting (fallback when Redis unavailable)."""
+    """Thread-safe in-memory rate limiting (fallback when Redis unavailable)."""
     current_time = time.time()
     
-    # Evict stale/expired entries to prevent memory leak
-    if len(LOGIN_ATTEMPTS) > 5000:
-        stale_ips = [ip for ip, ts in LOGIN_ATTEMPTS.items() if not ts or current_time - ts[-1] >= window]
-        for ip in stale_ips:
-            del LOGIN_ATTEMPTS[ip]
-        # Hard cap to prevent memory bloat if under high concurrent attacks
+    with _cache_lock:
+        # Evict stale/expired entries to prevent memory leak
         if len(LOGIN_ATTEMPTS) > 5000:
-            LOGIN_ATTEMPTS.clear()
-            
-    if ip_address not in LOGIN_ATTEMPTS:
-        LOGIN_ATTEMPTS[ip_address] = []
-    
-    # Filter out timestamps older than the window
-    LOGIN_ATTEMPTS[ip_address] = [t for t in LOGIN_ATTEMPTS[ip_address] if current_time - t < window]
-    
-    # Check if limit reached
-    if len(LOGIN_ATTEMPTS[ip_address]) >= limit:
-        return False
-    
-    # Add current attempt
-    LOGIN_ATTEMPTS[ip_address].append(current_time)
-    return True
+            stale_ips = [ip for ip, ts in LOGIN_ATTEMPTS.items() if not ts or current_time - ts[-1] >= window]
+            for ip in stale_ips:
+                del LOGIN_ATTEMPTS[ip]
+            # Hard cap to prevent memory bloat if under high concurrent attacks
+            if len(LOGIN_ATTEMPTS) > 5000:
+                LOGIN_ATTEMPTS.clear()
+                
+        if ip_address not in LOGIN_ATTEMPTS:
+            LOGIN_ATTEMPTS[ip_address] = []
+        
+        # Filter out timestamps older than the window
+        LOGIN_ATTEMPTS[ip_address] = [t for t in LOGIN_ATTEMPTS[ip_address] if current_time - t < window]
+        
+        # Check if limit reached
+        if len(LOGIN_ATTEMPTS[ip_address]) >= limit:
+            return False
+        
+        # Add current attempt
+        LOGIN_ATTEMPTS[ip_address].append(current_time)
+        return True
 
 def check_rate_limit_redis(key_prefix, identifier, limit=5, window=60):
     """Redis-backed rate limiting. Falls back to in-memory if Redis unavailable."""
@@ -539,13 +474,14 @@ def check_rate_limit_redis(key_prefix, identifier, limit=5, window=60):
         pipe = r.pipeline()
         now = time.time()
         window_start = now - window
+        member = f"{now}:{uuid.uuid4().hex[:8]}"
         
         # Remove expired entries
         pipe.zremrangebyscore(key, 0, window_start)
         # Count current entries
         pipe.zcard(key)
-        # Add current attempt
-        pipe.zadd(key, {str(now): now})
+        # Add current attempt with unique member to prevent same-timestamp collisions
+        pipe.zadd(key, {member: now})
         # Set expiry on the key
         pipe.expire(key, window)
         
@@ -554,7 +490,7 @@ def check_rate_limit_redis(key_prefix, identifier, limit=5, window=60):
         
         if current_count >= limit:
             # Remove the attempt we just added since we're over limit
-            pipe.zrem(key, str(now))
+            pipe.zrem(key, member)
             pipe.execute()
             return False
         
@@ -674,8 +610,9 @@ def generate_random_port():
 def count_active_routers():
     """Counts how many Traefik routers are currently active in Redis."""
     r = get_redis()
-    keys = r.keys("traefik/http/routers/*/rule")
-    return len(keys)
+    if not r:
+        return 0
+    return sum(1 for _ in r.scan_iter("traefik/http/routers/*/rule"))
 
 def cf_request(method, endpoint, data=None, timeout=15):
     cf_token = get_setting("CF_API_TOKEN")
@@ -690,11 +627,15 @@ def cf_request(method, endpoint, data=None, timeout=15):
         "Content-Type": "application/json"
     }
     url = f"https://api.cloudflare.com/client/v4/zones/{cf_zone_id}/{endpoint}"
-    response = requests.request(method, url, headers=headers, json=data, timeout=timeout)
-    if not response.ok:
-        print(f"❌ Cloudflare Error ({endpoint}): {response.text}")
+    try:
+        response = requests.request(method, url, headers=headers, json=data, timeout=timeout)
+        if not response.ok:
+            print(f"❌ Cloudflare Error ({endpoint}): {response.text}")
+            return None
+        return response.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.error("Cloudflare Request Error (%s): %s", endpoint, e)
         return None
-    return response.json()
 
 def should_delete_dns_record(record_name, subdomain_prefix, current_hostname=None):
     """
@@ -1021,7 +962,7 @@ def _test_service_firewall(service_id):
     # 3. Connect to UniFi and get current state
     base_url = f"https://{unifi_host}"
     session = requests.Session()
-    session.verify = False
+    session.verify = get_unifi_verify_ssl()
     results = {}
     
     try:
@@ -1248,7 +1189,7 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
     # Update the WAN port if provided
     if forward_port is not None and enable_rule:
         old_port = target_rule.get("dst_port", "unknown")
-        if old_port != forward_port:
+        if str(old_port) != str(forward_port):
             target_rule["dst_port"] = str(forward_port)
             changes.append(f"port={forward_port}")
             print(f"   Updating WAN port: {old_port} → {forward_port}")
@@ -1334,15 +1275,14 @@ def send_discord_notification(message, title=None, color=None, webhook_url=None,
     if not webhook_url:
         return
 
-    get_version()
-
     embed = {
         "description": message,
         "color": color or 0x3498db,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-                        "footer": {
-                            "text": f"RouteGhost v{get_version()}"
-                        },    }
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "footer": {
+            "text": f"RouteGhost v{get_version()}"
+        },
+    }
     
     if title:
         embed["title"] = title
@@ -1364,32 +1304,47 @@ def perform_health_check():
         timeout = 1
         
     try:
-        # Use a new connection for the thread/request
+        # Probe services OUTSIDE _cache_lock so slow network I/O never blocks requests
         services = db.get_all_services()
+        probe_results = {}
+        enabled_services = {}
+        disabled_ids = []
+
+        for service in services:
+            if service['enabled']:
+                enabled_services[service['id']] = service
+                probe_results[service['id']] = check_service_health(service['target_url'], timeout=timeout)
+            else:
+                disabled_ids.append(service['id'])
+
+        notifications = []
         with _cache_lock:
-            for service in services:
-                if service['enabled']:
-                    is_healthy = check_service_health(service['target_url'], timeout=timeout)
-                    
-                    # Check for status change
-                    prev_healthy = HEALTH_STATUS_CACHE.get(service['id'])
-                    
-                    # Only notify if we had a previous status (to avoid startup spam) 
-                    # AND the status has changed
-                    if prev_healthy is not None and prev_healthy != is_healthy:
-                        if is_healthy:
-                            send_discord_notification(f"✅ Service **{service['name']}** is back ONLINE.", title="Health Alert: Recovered", color=0x2ecc71, msg_type='health')
-                        else:
-                            send_discord_notification(f"⚠️ Service **{service['name']}** is UNHEALTHY.", title="Health Alert: Failure", color=0xe74c3c, msg_type='health')
-                        
-                        # Update MQTT on health change
-                        mqtt_manager.publish_state(service, True, healthy=is_healthy)
-                    
-                    HEALTH_STATUS_CACHE[service['id']] = is_healthy
-                else:
-                    # Remove from cache if disabled
-                    if service['id'] in HEALTH_STATUS_CACHE:
-                        del HEALTH_STATUS_CACHE[service['id']]
+            for sid, is_healthy in probe_results.items():
+                prev_healthy = HEALTH_STATUS_CACHE.get(sid)
+                if prev_healthy is not None and prev_healthy != is_healthy:
+                    notifications.append((enabled_services[sid], is_healthy))
+                HEALTH_STATUS_CACHE[sid] = is_healthy
+            for sid in disabled_ids:
+                HEALTH_STATUS_CACHE.pop(sid, None)
+
+        # Dispatch external notifications outside _cache_lock
+        for service, is_healthy in notifications:
+            if is_healthy:
+                send_discord_notification(
+                    f"✅ Service **{service['name']}** is back ONLINE.",
+                    title="Health Alert: Recovered",
+                    color=0x2ecc71,
+                    msg_type='health',
+                )
+            else:
+                send_discord_notification(
+                    f"⚠️ Service **{service['name']}** is UNHEALTHY.",
+                    title="Health Alert: Failure",
+                    color=0xe74c3c,
+                    msg_type='health',
+                )
+            mqtt_manager.publish_state(service, True, healthy=is_healthy)
+
         return True
     except Exception as e:
         logger.warning("Health check error: %s", e)
@@ -1461,25 +1416,26 @@ def get_status():
             firewall_status = "CLOSED"
         firewall_port = rule_info.get("port")
     
-    # Get all services and their status
+    # Get all services and their status in a single Redis mget
     services = db.get_all_services()
     active_services = []
     
-    for service in services:
-        current_rule = r.get(f"traefik/http/routers/{service['router_name']}/rule")
-        if current_rule:
-            host = current_rule.replace("Host(`", "").replace("`)", "")
-            
-            # Check health
-            is_healthy = HEALTH_STATUS_CACHE.get(service['id'], True)
-            
-            active_services.append({
-                "id": service['id'],
-                "name": service['name'],
-                "hostname": f"https://{host}",
-                "status": "ONLINE",
-                "healthy": is_healthy
-            })
+    if services:
+        rule_keys = [f"traefik/http/routers/{s['router_name']}/rule" for s in services]
+        current_rules = r.mget(rule_keys)
+        with _cache_lock:
+            health_snapshot = dict(HEALTH_STATUS_CACHE)
+        for service, current_rule in zip(services, current_rules):
+            if current_rule:
+                host = current_rule.replace("Host(`", "").replace("`)", "")
+                is_healthy = health_snapshot.get(service['id'], True)
+                active_services.append({
+                    "id": service['id'],
+                    "name": service['name'],
+                    "hostname": f"https://{host}",
+                    "status": "ONLINE",
+                    "healthy": is_healthy
+                })
     
     return {
         "firewall": firewall_status,
@@ -1605,19 +1561,22 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             print("   ⚠️ Other services are still active. Firewall will remain OPEN.")
 
     elif routing_mode == 'vps':
-        print("🔹 Cleaning up VPS forwarding...")
-        try:
-            routing.VPSManager.cleanup_port_forward(443)
-        except Exception as e:
-            print(f"   ⚠️ Failed to cleanup VPS: {e}")
-        
-        # Check active services (excluding this one)
+        # Check active VPS services (excluding this one) before tearing down shared port 443 / WireGuard
         all_services = db.get_all_services()
-        other_active = [s for s in all_services if s['enabled'] and s['id'] != service_id]
-        
-        if not other_active:
+        other_active_vps = [
+            s for s in all_services
+            if s['enabled'] and s['id'] != service_id and routing.get_routing_mode(s) == 'vps'
+        ]
+        if not other_active_vps:
+            print("🔹 Cleaning up VPS forwarding...")
+            try:
+                routing.VPSManager.cleanup_port_forward(443)
+            except Exception as e:
+                print(f"   ⚠️ Failed to cleanup VPS: {e}")
             print("🔹 Stopping WireGuard...")
             routing.WireGuardManager.down()
+        else:
+            print("   ⚠️ Other VPS services are still active. Keeping VPS forwarding and WireGuard up.")
 
     print("🔹 Cleaning up DNS records...")
     if service.get('random_suffix', 1):
@@ -1862,9 +1821,19 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         
     random_port = active_service_port  # Use the shared port
 
+    # Validate core prerequisites BEFORE mutating external firewall/VPS state
+    domain_root = get_setting("DOMAIN_ROOT")
+    if not domain_root:
+        return {"error": "DOMAIN_ROOT not configured"}
+
+    r = get_redis()
+    if not r:
+        return {"error": "Redis connection failed"}
+
     # === FIREWALL & ROUTING SETUP ===
     unifi_session = None
     unifi_base_url = None
+    opened_unifi_firewall = False
 
     if routing_mode == 'unifi' and not skip_unifi:
         # Traditional Cloudflare + UniFi
@@ -1885,10 +1854,17 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         
         # Only toggle if new port or ensuring open
         if not active_service_with_port or force:
-             if not toggle_unifi(True, active_service_port, session=unifi_session, base_url=unifi_base_url):
+            if toggle_unifi(True, active_service_port, session=unifi_session, base_url=unifi_base_url):
+                if not active_service_with_port:
+                    opened_unifi_firewall = True
+            else:
                 print("⚠️ Warning: UniFi update failed, but proceeding...")
     
     elif routing_mode == 'vps':
+        wg_client_addr = get_setting('WG_CLIENT_ADDRESS')
+        if not wg_client_addr:
+            return {"error": "WG_CLIENT_ADDRESS not configured"}
+
         # VPS Gateway + WireGuard
         print("🔹 Setting up WireGuard Connection...")
         success, msg = routing.WireGuardManager.up()
@@ -1897,17 +1873,13 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         print(f"   WireGuard: {msg}")
 
         print("🔹 Configuring VPS Port Forwarding...")
-        local_ip = get_setting('WG_CLIENT_ADDRESS').split('/')[0]
+        local_ip = wg_client_addr.split('/')[0]
         try:
             # We forward Public 443 -> Local WG IP : Random Port
             routing.VPSManager.forward_port(443, local_ip, random_port)
             print(f"   Forwarded VPS:443 -> {local_ip}:{random_port}")
         except Exception as e:
             return {"error": f"VPS configuration failed: {e}"}
-
-    domain_root = get_setting("DOMAIN_ROOT")
-    if not domain_root:
-        return {"error": "DOMAIN_ROOT not configured"}
     
     if service.get('random_suffix', 1):
         random_part = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(8))
@@ -1946,6 +1918,16 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         result = cf_request("POST", "dns_records", dns_data)
         
     if not result:
+        # Roll back newly opened UniFi port so we don't leave firewall dangling open
+        if opened_unifi_firewall:
+            logger.warning("DNS creation failed; rolling back UniFi firewall port.")
+            try:
+                toggle_unifi(False, session=unifi_session, base_url=unifi_base_url)
+            finally:
+                if unifi_session:
+                    logout_unifi(unifi_session, unifi_base_url)
+        elif unifi_session:
+            logout_unifi(unifi_session, unifi_base_url)
         return {"error": "Failed to create DNS record"}
 
     if routing_mode == 'unifi':
@@ -2117,6 +2099,14 @@ def rotate_service(service_id, actor=None):
 # ================= API / MAIN =================
 app = Flask(__name__)
 
+# Trust X-Forwarded-* headers from reverse proxy (e.g., Traefik) for accurate client IP rate limiting
+try:
+    _trusted_proxies = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
+except ValueError:
+    _trusted_proxies = 1
+if _trusted_proxies > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_trusted_proxies, x_proto=_trusted_proxies, x_host=_trusted_proxies)
+
 # CSRF Protection
 app.config['WTF_CSRF_CHECK_DEFAULT'] = False # We will manually check to exempt API keys
 csrf = CSRFProtect(app)
@@ -2170,12 +2160,11 @@ def add_security_headers(response):
 @app.after_request
 def log_request(response):
     """Log every request with status code and add X-Request-ID header."""
-    import time as _time
     request_id = getattr(g, "request_id", None)
     if request_id:
         response.headers["X-Request-ID"] = request_id
     if not request.path.startswith('/static'):
-        duration = _time.monotonic() - getattr(g, '_request_start_time', _time.monotonic())
+        duration = time.monotonic() - getattr(g, '_request_start_time', time.monotonic())
         log_level = logging.WARNING if response.status_code >= 400 else logging.INFO
         logger.log(
             log_level,
@@ -2190,8 +2179,7 @@ def log_request(response):
 @app.before_request
 def start_request_timer():
     """Record request start time and assign a request ID for logging."""
-    import time as _time
-    g._request_start_time = _time.monotonic()
+    g._request_start_time = time.monotonic()
     g.request_id = uuid.uuid4().hex[:8]
 
 # Use persistent secret key from environment or generate one and store it
@@ -2385,15 +2373,18 @@ def inject_version():
 # WebAuthn routes
 @app.route('/auth/register/begin', methods=['POST'])
 def register_begin():
-    # Only allow registration during setup window if no users exist
-    if db.count_users() == 0 and not is_in_setup_window():
+    # Registration is ONLY allowed during initial setup when zero users exist
+    user_count = db.count_users()
+    if user_count > 0:
+        return jsonify({"error": "Registration is closed."}), 403
+    if not is_in_setup_window():
         return jsonify({"error": "Setup window expired. Please restart the application."}), 410
     
     # Rate limit: 10 attempts per minute per IP for WebAuthn
     if not check_webauthn_rate_limit(request.remote_addr):
         return jsonify({"error": "Too many attempts. Please try again later."}), 429
     
-    data = request.json
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     
     if not username:
@@ -2443,7 +2434,11 @@ def register_begin():
 
 @app.route('/auth/register/complete', methods=['POST'])
 def register_complete():
-    data = request.json
+    # Block registration if a user already exists (prevents TOCTOU race)
+    if db.count_users() > 0:
+        return jsonify({"error": "Registration is closed."}), 403
+
+    data = request.get_json(silent=True) or {}
     credential = data.get('credential')
     
     if not credential:
@@ -2478,15 +2473,16 @@ def register_complete():
             expected_origin=origin,
         )
         
-        # Create user only after successful verification
-        user_id = db.add_user(username)
-        
-        # Store credential
-        db.add_credential(
-            user_id=user_id,
-            credential_id=verification.credential_id.hex(),
-            public_key=verification.credential_public_key.hex()
-        )
+        # Atomically ensure no user was created concurrently before inserting
+        with _auth_lock:
+            if db.count_users() > 0:
+                return jsonify({"error": "Registration is closed."}), 403
+            user_id = db.add_user(username)
+            db.add_credential(
+                user_id=user_id,
+                credential_id=verification.credential_id.hex(),
+                public_key=verification.credential_public_key.hex()
+            )
         
         # Log the user in
         user = db.get_user(user_id)
@@ -2510,7 +2506,7 @@ def register_complete():
 
 @app.route('/auth/login/begin', methods=['POST'])
 def login_begin():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     
     if not username:
@@ -2558,7 +2554,7 @@ def login_begin():
 
 @app.route('/auth/login/complete', methods=['POST'])
 def login_complete():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     credential = data.get('credential')
     
     if not credential:
@@ -2635,8 +2631,8 @@ def login_complete():
 @app.route('/auth/login/password', methods=['POST'])
 def login_password():
     """Handle username/password login."""
-    # Check rate limit (5 attempts per minute)
-    if not check_rate_limit(request.remote_addr):
+    # Check rate limit (5 attempts per minute, Redis-backed with in-memory fallback)
+    if not check_rate_limit_redis("login", request.remote_addr):
         return jsonify({"error": "Too many login attempts. Please try again in a minute."}), 429
 
     data = request.get_json(silent=True) or request.form
@@ -2666,24 +2662,25 @@ def login_password():
 
 @app.before_request
 def check_2fa_enforcement():
-    """Enforce 2FA globally if enabled."""
+    """Enforce 2FA globally if enabled (including session-authenticated /api/* calls)."""
     if current_user.is_authenticated:
-        # Skip for static resources and auth-related routes to prevent lockout loops
+        # Skip for static resources, health probe, and auth/settings routes to prevent lockout loops
         if request.path.startswith('/static') or \
            request.path.startswith('/auth') or \
-           request.path == '/logout' or \
-           request.path == '/settings':
+           request.path in ('/logout', '/settings', '/healthz'):
             return
 
-        # Skip API routes (handled by their own auth decorators usually)
-        if request.path.startswith('/api'):
+        # Only exempt API routes when authenticated via X-API-Key (not browser cookie sessions)
+        if request.path.startswith('/api') and request.headers.get('X-API-Key'):
             return
 
         enforce = db.get_setting('ENFORCE_2FA') == '1'
         user = db.get_user(current_user.id)
         
-        # If enforced and no TOTP secret, redirect to settings
+        # If enforced and no TOTP secret, block API or redirect UI to settings
         if enforce and user and not user.get('totp_secret'):
+            if request.path.startswith('/api'):
+                return jsonify({"error": "Two-Factor Authentication is enforced globally. Please set it up in Settings."}), 403
             flash('⚠️ Two-Factor Authentication is enforced globally. Please set it up immediately to continue.', 'error')
             return redirect(url_for('settings'))
 
@@ -2738,9 +2735,17 @@ def login_2fa():
 @app.route('/auth/password/change', methods=['POST'])
 @login_required
 def change_password():
-    """Change password for the current user."""
+    """Change password for the current user. Requires current_password if one is already set."""
     data = request.get_json(silent=True) or request.form
     new_password = data.get('new_password')
+    current_password = data.get('current_password')
+
+    user = db.get_user(current_user.id)
+    if user and user.get('password_hash'):
+        if not current_password:
+            return jsonify({"error": "Current password is required"}), 400
+        if not check_password_hash(user['password_hash'], current_password):
+            return jsonify({"error": "Current password is incorrect"}), 403
     
     if not new_password:
         return jsonify({"error": "New password required"}), 400
@@ -2812,7 +2817,7 @@ def add_passkey_begin():
 @login_required
 def add_passkey_complete():
     """Complete registration of a new passkey."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     credential = data.get('credential')
     
     if not credential:
@@ -2896,7 +2901,7 @@ def setup_2fa_complete():
     if not pyotp:
         return jsonify({"error": "2FA support not available"}), 501
         
-    data = request.get_json(silent=True)
+    data = request.get_json(silent=True) or {}
     code = data.get('code')
     secret = session.get('totp_setup_secret')
     
@@ -3159,6 +3164,10 @@ def settings():
                     
                 if key in ALLOWED_USER_SETTINGS:
                     value = request.form[key]
+
+                    # Preserve existing sensitive secrets when form input is submitted blank
+                    if key in SENSITIVE_SETTINGS and value == "":
+                        continue
                     
                     # Basic Validation
                     if key == 'WG_CLIENT_ADDRESS' and value:
@@ -3199,7 +3208,10 @@ def settings():
             print(f"⚠️ Unexpected error in settings: {str(e)}")
             flash('An unexpected error occurred while saving settings. Please try again.', 'error')
     
-    settings = db.get_all_settings()
+    raw_settings = db.get_all_settings()
+    # Never echo plaintext secrets into HTML templates; track which ones are configured
+    configured_secrets = {k for k in SENSITIVE_SETTINGS if raw_settings.get(k)}
+    settings = {k: ("" if k in SENSITIVE_SETTINGS else v) for k, v in raw_settings.items()}
     
     # Add user info for credential management
     user = db.get_user(current_user.id)
@@ -3237,6 +3249,7 @@ def settings():
     
     return render_template('settings.html', 
                           settings=settings, 
+                          configured_secrets=configured_secrets,
                           has_password=has_password, 
                           credentials=credentials, 
                           has_2fa=has_2fa, 
@@ -3566,7 +3579,7 @@ def api_diagnose_service(service_id):
                 "target": target_url
             }
         else:
-            response = requests.get(target_url, timeout=5, allow_redirects=True)
+            response = requests.get(target_url, timeout=5, allow_redirects=False, verify=False)  # nosec B501
             
             # Categorize responses more accurately
             if 200 <= response.status_code < 300:
@@ -3658,12 +3671,22 @@ def api_delete_service(service_id):
 @app.route('/api/logs', methods=['GET'])
 @api_key_or_login_required
 def api_get_logs():
+    """Return the tail of the application log file (default last 200KB, max 1MB)."""
+    try:
+        max_bytes = min(max(int(request.args.get('max_bytes', 200 * 1024)), 1024), 1024 * 1024)
+    except (ValueError, TypeError):
+        max_bytes = 200 * 1024
     try:
         if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, 'r', encoding='utf-8') as f:
-                content = f.read()
-            return jsonify({"logs": content})
-        return jsonify({"logs": "Log file empty or not found."})
+            file_size = os.path.getsize(LOG_FILE)
+            with open(LOG_FILE, 'rb') as f:
+                if file_size > max_bytes:
+                    f.seek(file_size - max_bytes)
+                    # Skip partial first line
+                    f.readline()
+                content = f.read().decode('utf-8', errors='replace')
+            return jsonify({"logs": content, "truncated": file_size > max_bytes})
+        return jsonify({"logs": "Log file empty or not found.", "truncated": False})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3726,16 +3749,19 @@ def api_rotate_firewall_port():
     return jsonify(result)
 
 @app.route('/api/users/<username>/reset-password', methods=['POST'])
-@api_key_or_login_required
+@login_required
 def api_reset_password(username):
-    """Reset password for a user and show it in logs."""
+    """Reset password for the currently authenticated user."""
     # Check rate limit (5 attempts per minute)
-    if not check_rate_limit(request.remote_addr):
+    if not check_rate_limit_redis("reset", request.remote_addr):
         return jsonify({"error": "Too many attempts. Please try again in a minute."}), 429
 
     user = db.get_user_by_username(username)
     if not user:
         return jsonify({"error": "User not found"}), 404
+
+    if user['id'] != current_user.id:
+        return jsonify({"error": "Forbidden: cannot reset another user's password"}), 403
         
     # Generate random password meeting complexity requirements
     alphabet = string.ascii_letters + string.digits + '!@#$%^&*'
@@ -3744,13 +3770,24 @@ def api_reset_password(username):
     pwhash = generate_password_hash(password)
     try:
         db.update_user_password(user['id'], pwhash)
-        print(f"\n🔐 PASSWORD RESET FOR USER: {username}")
-        print(f"   New Password: {'*' * len(password)} (length={len(password)})")
-        print("   ⚠️ Password NOT logged for security. Return it to the admin via a secure channel.\n")
-        return jsonify({"message": "Password reset successfully. Check logs for the new password.", "password": password})
+        logger.info("Password reset completed for user '%s'", username)
+        return jsonify({"message": "Password reset successfully.", "password": password})
     except Exception as e:
-        print(f"❌ Error resetting password: {e}")
+        logger.error("Error resetting password: %s", e)
         return jsonify({"error": "Failed to save password"}), 500
+
+def _is_valid_discord_webhook(url):
+    """Validate that a webhook URL targets an official Discord webhook endpoint."""
+    try:
+        parsed = urlparse(url)
+        allowed_hosts = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"}
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname in allowed_hosts
+            and parsed.path.startswith("/api/webhooks/")
+        )
+    except Exception:
+        return False
 
 @app.route('/api/notifications/test', methods=['POST'])
 @login_required
@@ -3761,6 +3798,8 @@ def api_test_notification():
     
     if not webhook_url:
         return jsonify({"error": "No Webhook URL provided"}), 400
+    if not _is_valid_discord_webhook(webhook_url):
+        return jsonify({"error": "Invalid Discord Webhook URL"}), 400
         
     send_discord_notification("🔔 **Test Notification**\nTraefik Route Control is connected to Discord!", title="System Info", webhook_url=webhook_url, msg_type='test')
     return jsonify({"success": True})
@@ -3768,8 +3807,9 @@ def api_test_notification():
 @app.route('/api/settings/backup', methods=['GET'])
 @login_required
 def api_backup_settings():
-    """Download current settings as JSON."""
-    settings = db.get_all_settings()
+    """Download current non-sensitive settings as JSON (secrets omitted for safety)."""
+    all_settings = db.get_all_settings()
+    settings = {k: v for k, v in all_settings.items() if k not in SENSITIVE_SETTINGS}
     json_str = json.dumps(settings, indent=2)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3839,47 +3879,57 @@ def api_save_setting():
 @app.route('/api/test/mqtt', methods=['POST'])
 @login_required
 def test_mqtt_connection_route():
+    client = None
     try:
-        data = request.json
-        host = data.get('host')
-        port = int(data.get('port', 1883))
-        username = data.get('username')
-        password = data.get('password')
+        data = request.get_json(silent=True) or {}
+        host = data.get('host') or get_setting('MQTT_HOST', required=False)
+        port = int(data.get('port') or get_setting('MQTT_PORT', required=False) or 1883)
+        username = data.get('username') or get_setting('MQTT_USER', required=False)
+        password = data.get('password') or get_setting('MQTT_PASS', required=False)
         
         if not host:
             return jsonify({"error": "Host is required"}), 400
             
         import paho.mqtt.client as mqtt
         
-        # Create a temporary client for testing
-        client = mqtt.Client()
+        # Create a temporary client compatible with paho-mqtt 2.x
+        if hasattr(mqtt, "CallbackAPIVersion"):
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        else:
+            client = mqtt.Client()
         if username:
             client.username_pw_set(username, password)
             
         # Try to connect
         client.connect(host, port, 5)
         client.loop_start()
-        time.sleep(1) # Give it a moment
+        time.sleep(1)  # Give it a moment
         
         if client.is_connected():
-            client.disconnect()
             return jsonify({"message": "MQTT Connection Successful!"})
         else:
             return jsonify({"error": "Could not connect to MQTT Broker"}), 400
             
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+    finally:
+        if client is not None:
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
 
 @app.route('/api/test/redis', methods=['POST'])
 @login_required
 def api_test_redis():
-    data = request.get_json()
-    host = data.get('host')
-    port = data.get('port')
-    password = data.get('password')
+    data = request.get_json(silent=True) or {}
+    host = data.get('host') or get_setting('REDIS_HOST', required=False)
+    port = data.get('port') or get_setting('REDIS_PORT', required=False) or 6379
+    password = data.get('password') or get_setting('REDIS_PASS', required=False) or None
     
     try:
-        r = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
+        r = redis.Redis(host=host, port=int(port), password=password, socket_timeout=5)
         r.ping()
         return jsonify({"message": "Redis connection successful!"})
     except Exception as e:
@@ -3894,12 +3944,12 @@ def api_clear_redis_routes():
         return jsonify({"error": "Redis connection failed"}), 500
     
     try:
-        # Find all keys starting with traefik/
-        keys = r.keys("traefik/*")
+        # Use scan_iter instead of blocking KEYS *
+        keys = list(r.scan_iter("traefik/*"))
         if keys:
-            # redis-py delete needs positional arguments
             r.delete(*keys)
             return jsonify({"message": f"Successfully cleared {len(keys)} Traefik entries from Redis"})
+        return jsonify({"message": "No Traefik entries found in Redis"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3907,11 +3957,11 @@ def api_clear_redis_routes():
 @login_required
 def test_vps_ssh():
     """Test VPS SSH connection"""
-    data = request.json
-    host = data.get('host')
-    user = data.get('user')
-    port = data.get('port', 22)
-    key = data.get('key')
+    data = request.get_json(silent=True) or {}
+    host = data.get('host') or get_setting('VPS_HOST', required=False)
+    user = data.get('user') or get_setting('VPS_SSH_USER', required=False) or 'root'
+    port = data.get('port') or get_setting('VPS_SSH_PORT', required=False) or 22
+    key = data.get('key') or get_setting('VPS_SSH_KEY', required=False)
     
     if not all([host, user, key]):
         return jsonify({"error": "Missing required fields"}), 400
@@ -3926,18 +3976,18 @@ def test_vps_ssh():
 @app.route('/api/test/unifi', methods=['POST'])
 @login_required
 def api_test_unifi():
-    """Test UniFi connection with provided credentials."""
+    """Test UniFi connection with provided or stored credentials."""
     data = request.get_json(silent=True) or {}
-    host = data.get('host')
-    user = data.get('user')
-    passw = data.get('pass')
+    host = data.get('host') or get_setting('UNIFI_HOST', required=False)
+    user = data.get('user') or get_setting('UNIFI_USER', required=False)
+    passw = data.get('pass') or get_setting('UNIFI_PASS', required=False)
     
     if not all([host, user, passw]):
         return jsonify({"error": "Host, Username, and Password are required"}), 400
         
     base_url = f"https://{host}"
     session = requests.Session()
-    session.verify = False
+    session.verify = get_unifi_verify_ssl()
     
     try:
         resp = login_unifi_with_retry(session, base_url, user, passw)
@@ -3953,10 +4003,10 @@ def api_test_unifi():
 @app.route('/api/test/cloudflare', methods=['POST'])
 @login_required
 def api_test_cloudflare():
-    """Test Cloudflare connection with provided credentials."""
+    """Test Cloudflare connection with provided or stored credentials."""
     data = request.get_json(silent=True) or {}
-    token = data.get('token')
-    zone_id = data.get('zone_id')
+    token = data.get('token') or get_setting('CF_API_TOKEN', required=False)
+    zone_id = data.get('zone_id') or get_setting('CF_ZONE_ID', required=False)
     
     if not token or not zone_id:
         return jsonify({"error": "Token and Zone ID are required"}), 400

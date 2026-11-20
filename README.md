@@ -120,9 +120,10 @@ Authenticate via browser session or `X-API-Key` header.
 
 ## 🔐 Security & Auth
 
-*   **Passkeys**: Uses WebAuthn for passwordless, phishing-resistant login.
+*   **Passkeys**: Uses WebAuthn for passwordless, phishing-resistant login. Registration is automatically locked after the first admin user is created.
+*   **Encryption at Rest**: Sensitive settings (API tokens, passwords, SSH/WireGuard private keys, Discord webhooks, and TOTP secrets) are encrypted in SQLite using Fernet symmetric encryption (`ROUTEGHOST_ENCRYPTION_KEY` or `/app/data/.secret_key`) and are never echoed back into HTML forms or unencrypted backups.
 *   **Network**: Randomizes ports to evade scanners. Firewall rules are only active when services are enabled.
-*   **Production**: If running behind a reverse proxy, set `RP_ID` (e.g., `example.com`) and `ORIGIN` (e.g., `https://example.com`) environment variables.
+*   **Production**: If running behind a reverse proxy, set `RP_ID` (e.g., `example.com`), `ORIGIN` (e.g., `https://example.com`), and optionally `TRUSTED_PROXY_COUNT` (default `1`) for accurate client IP rate limiting.
 
 ## 🏗️ Architecture
 
