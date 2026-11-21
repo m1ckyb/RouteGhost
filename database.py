@@ -1,7 +1,20 @@
 import sqlite3
 import os
+import threading
+import time
 from contextlib import contextmanager
 from crypto_utils import SENSITIVE_SETTINGS, encrypt_value, decrypt_value, is_encrypted
+
+# Lightweight TTL cache for settings to avoid per-query SQLite connection churn
+_settings_cache = {"data": None, "ts": 0.0}
+_settings_cache_lock = threading.Lock()
+_SETTINGS_CACHE_TTL = 10.0
+
+def invalidate_settings_cache():
+    """Clear the in-memory settings cache."""
+    with _settings_cache_lock:
+        _settings_cache["data"] = None
+        _settings_cache["ts"] = 0.0
 
 # Use /app/data for Docker volume mounting, fall back to current directory
 DATA_DIR = os.environ.get('DATA_DIR', '/app/data' if os.path.exists('/app/data') else os.path.dirname(__file__))
@@ -289,17 +302,29 @@ def update_service_status(service_id, enabled, current_hostname=None, current_po
         conn.commit()
 
 # Settings CRUD operations
+def _load_all_settings_cached():
+    """Load all settings with a short TTL cache."""
+    now = time.monotonic()
+    with _settings_cache_lock:
+        if _settings_cache["data"] is not None and (now - _settings_cache["ts"]) < _SETTINGS_CACHE_TTL:
+            return dict(_settings_cache["data"])
+
+    with get_db() as conn:
+        cursor = conn.execute("SELECT key, value FROM settings")
+        result = {}
+        for row in cursor.fetchall():
+            k, v = row['key'], row['value']
+            result[k] = decrypt_value(v, DATA_DIR) if k in SENSITIVE_SETTINGS else v
+
+    with _settings_cache_lock:
+        _settings_cache["data"] = dict(result)
+        _settings_cache["ts"] = time.monotonic()
+    return result
+
 def get_setting(key, default=None):
     """Get a setting value (transparently decrypting sensitive settings)."""
-    with get_db() as conn:
-        cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
-        row = cursor.fetchone()
-        if not row:
-            return default
-        val = row['value']
-        if key in SENSITIVE_SETTINGS:
-            return decrypt_value(val, DATA_DIR)
-        return val
+    settings = _load_all_settings_cached()
+    return settings.get(key, default)
 
 def set_setting(key, value):
     """Set a setting value (encrypting sensitive settings at rest)."""
@@ -310,22 +335,18 @@ def set_setting(key, value):
             ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
         """, (key, stored_value, stored_value))
         conn.commit()
+    invalidate_settings_cache()
 
 def delete_setting(key):
     """Delete a setting."""
     with get_db() as conn:
         conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         conn.commit()
+    invalidate_settings_cache()
 
 def get_all_settings():
     """Get all settings as a dictionary (transparently decrypting sensitive settings)."""
-    with get_db() as conn:
-        cursor = conn.execute("SELECT key, value FROM settings")
-        result = {}
-        for row in cursor.fetchall():
-            k, v = row['key'], row['value']
-            result[k] = decrypt_value(v, DATA_DIR) if k in SENSITIVE_SETTINGS else v
-        return result
+    return _load_all_settings_cached()
 
 def _decrypt_user_row(row):
     """Convert a user sqlite3.Row to dict and decrypt totp_secret if present."""

@@ -202,7 +202,9 @@
                             <td>{{ key.last_used_at or 'Never' }}</td>
                             <td>
                                 <button type="button" class="btn btn-danger btn-sm" 
-                                        onclick="showDeleteConfirm({{ key.id }}, '{{ key.name }}')">Delete</button>
+                                        data-key-id="{{ key.id }}"
+                                        data-key-name="{{ key.name }}"
+                                        onclick="showDeleteConfirm(Number(this.dataset.keyId), this.dataset.keyName)">Delete</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -1037,8 +1039,8 @@ async function testUnifiConnection(event) {
     const user = document.getElementById('UNIFI_USER').value;
     const pass = document.getElementById('UNIFI_PASS').value;
     
-    if (!host || !user || !pass) {
-        showToast('Please enter UniFi Host, Username, and Password', 'warning');
+    if (!host || !user) {
+        showToast('Please enter UniFi Host and Username', 'warning');
         return;
     }
     
@@ -1075,8 +1077,8 @@ async function testCloudflareConnection(event) {
     const token = document.getElementById('CF_API_TOKEN').value;
     const zoneId = document.getElementById('CF_ZONE_ID').value;
     
-    if (!token || !zoneId) {
-        showToast('Please enter Cloudflare API Token and Zone ID', 'warning');
+    if (!zoneId) {
+        showToast('Please enter Cloudflare Zone ID', 'warning');
         return;
     }
     
@@ -1199,8 +1201,8 @@ async function testVpsSsh(event) {
     const port = document.getElementById('VPS_SSH_PORT').value;
     const key = document.getElementById('VPS_SSH_KEY').value;
 
-    if (!host || !user || !key) {
-        showToast('Please enter Host, User, and Private Key', 'warning');
+    if (!host || !user) {
+        showToast('Please enter Host and User', 'warning');
         return;
     }
 

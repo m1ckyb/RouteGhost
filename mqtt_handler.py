@@ -3,6 +3,9 @@ import os
 import threading
 import paho.mqtt.client as mqtt
 import database as db
+from logging_config import get_logger
+
+logger = get_logger("routeghost.mqtt")
 
 
 def _get_app_version():
@@ -56,7 +59,7 @@ class MQTTHandler:
                 return
 
             if not self.host:
-                print("⚠️ MQTT enabled but no host configured.")
+                logger.warning("⚠️ MQTT enabled but no host configured.")
                 return
 
             if self.running:
@@ -73,20 +76,20 @@ class MQTTHandler:
                 self.client.on_message = self.on_message
                 self.client.on_disconnect = self.on_disconnect
 
-                print(f"🔹 Connecting to MQTT Broker at {self.host}:{self.port}...")
+                logger.info("🔹 Connecting to MQTT Broker at %s:%s...", self.host, self.port)
                 self.client.connect_async(self.host, self.port, 60)
                 self.client.loop_start()
                 self.running = True
                 
             except Exception as e:
-                print(f"❌ Failed to start MQTT client: {e}")
+                logger.error("❌ Failed to start MQTT client: %s", e)
                 self.running = False
 
     def stop(self):
         """Stop the MQTT client."""
         with self._lock:
             if self.client:
-                print("🔹 Stopping MQTT client...")
+                logger.info("🔹 Stopping MQTT client...")
                 try:
                     self.remove_global_discovery()
                 except Exception:
@@ -98,18 +101,18 @@ class MQTTHandler:
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
-            print("✅ Connected to MQTT Broker")
+            logger.info("✅ Connected to MQTT Broker")
             self.publish_all_discovery()
             # Subscribe to all service command topics
             self.subscribe_all()
         else:
-            print(f"❌ MQTT Connection failed with code {rc}")
+            logger.error("❌ MQTT Connection failed with code %s", rc)
 
     def on_disconnect(self, client, userdata, rc):
         if rc != 0:
-            print("⚠️ MQTT Unexpected disconnection. Auto-reconnect should handle this.")
+            logger.warning("⚠️ MQTT Unexpected disconnection. Auto-reconnect should handle this.")
         else:
-            print("🔹 MQTT Disconnected")
+            logger.info("🔹 MQTT Disconnected")
 
     def on_message(self, client, userdata, msg):
         try:
@@ -122,24 +125,24 @@ class MQTTHandler:
                     service_id = int(parts[2])
                     if self.command_callback:
                         if payload == "ON":
-                            print(f"🔹 MQTT Command: Turn ON Service {service_id}")
+                            logger.info("🔹 MQTT Command: Turn ON Service %s", service_id)
                             self.command_callback(service_id, "ON")
                         elif payload == "OFF":
-                            print(f"🔹 MQTT Command: Turn OFF Service {service_id}")
+                            logger.info("🔹 MQTT Command: Turn OFF Service %s", service_id)
                             self.command_callback(service_id, "OFF")
                         elif payload == "ROTATE":
-                            print(f"🔹 MQTT Command: Rotate Service {service_id}")
+                            logger.info("🔹 MQTT Command: Rotate Service %s", service_id)
                             self.command_callback(service_id, "ROTATE")
                 
                 # Global commands: routeghost/global/set
                 elif parts[1] == "global" and parts[2] == "set":
                     if self.command_callback:
                         if payload in ["ALL_ON", "ALL_OFF", "ROTATE_PORT"]:
-                            print(f"🔹 MQTT Global Command: {payload}")
+                            logger.info("🔹 MQTT Global Command: %s", payload)
                             self.command_callback("global", payload)
 
         except Exception as e:
-            print(f"❌ Error handling MQTT message: {e}")
+            logger.error("❌ Error handling MQTT message: %s", e)
 
     def subscribe_all(self):
         """Subscribe to command topics for all services and global commands."""

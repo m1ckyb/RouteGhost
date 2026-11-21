@@ -86,7 +86,7 @@ def get_version():
             with open(cwd_file, 'r') as f:
                 return f.read().strip()
     except Exception as e:
-        print(f"⚠️ Error reading version: {e}")
+        logger.warning("%s", f"⚠️ Error reading version: {e}")
         
     return "Unknown"
 
@@ -133,7 +133,7 @@ def migrate_env_to_db():
         migrated = True
     
     if migrated:
-        print("✅ Migrated settings from .env to database")
+        logger.info("%s", "✅ Migrated settings from .env to database")
 
 # Try to load from .env file if exists (for migration)
 env_path = os.path.join(script_dir, ".env")
@@ -363,7 +363,7 @@ _shutdown_event = threading.Event()
 
 def request_shutdown(signum=None, frame=None):
     """Signal handler for graceful shutdown."""
-    print("🛑 Shutdown signal received, stopping background threads...")
+    logger.info("%s", "🛑 Shutdown signal received, stopping background threads...")
     _shutdown_event.set()
 
 def get_unifi_verify_ssl():
@@ -406,7 +406,7 @@ def get_redis():
         _redis_config_hash = config_key
         return client
     except Exception as e:
-        print(f"❌ Redis Connection Error: {e}")
+        logger.error("%s", f"❌ Redis Connection Error: {e}")
         _redis_client = None
         _redis_config_hash = None
         return None
@@ -427,7 +427,7 @@ def get_public_ip():
             _public_ip_cache["timestamp"] = now
         return ip
     except (requests.RequestException, ValueError) as e:
-        print(f"⚠️ Failed to get public IP: {e}")
+        logger.warning("%s", f"⚠️ Failed to get public IP: {e}")
         with _cache_lock:
             return _public_ip_cache["ip"] or "Unknown"
 
@@ -619,7 +619,7 @@ def cf_request(method, endpoint, data=None, timeout=15):
     cf_zone_id = get_setting("CF_ZONE_ID")
     
     if not cf_token or not cf_zone_id:
-        print("❌ Cloudflare settings not configured")
+        logger.error("%s", "❌ Cloudflare settings not configured")
         return None
     
     headers = {
@@ -630,7 +630,7 @@ def cf_request(method, endpoint, data=None, timeout=15):
     try:
         response = requests.request(method, url, headers=headers, json=data, timeout=timeout)
         if not response.ok:
-            print(f"❌ Cloudflare Error ({endpoint}): {response.text}")
+            logger.error("%s", f"❌ Cloudflare Error ({endpoint}): {response.text}")
             return None
         return response.json()
     except (requests.RequestException, ValueError) as e:
@@ -687,13 +687,13 @@ def unifi_request(session, method, url, **kwargs):
             resp = session.request(method, url, **kwargs)
             if resp.status_code == 429:
                 wait_time = (attempt + 1) * 4
-                print(f"   ⚠️ UniFi Rate Limit (429). Retrying in {wait_time}s...")
+                logger.warning("%s", f"   ⚠️ UniFi Rate Limit (429). Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
             return resp
         except (requests.exceptions.RequestException, socket.timeout) as e:
             if attempt == 4:
-                print(f"❌ UniFi Request Failed: {e}")
+                logger.error("%s", f"❌ UniFi Request Failed: {e}")
                 return None
             time.sleep(2)
     return None
@@ -714,7 +714,7 @@ def sync_unifi_groups(session=None, base_url=None):
     if not ip_group_name or not port_group_name:
         return
         
-    print("🔹 Syncing UniFi Firewall Groups...")
+    logger.info("%s", "🔹 Syncing UniFi Firewall Groups...")
     
     # 1. Calculate desired state from enabled services
     services = db.get_all_services()
@@ -756,7 +756,7 @@ def sync_unifi_groups(session=None, base_url=None):
                         desired_ips.add(ip)
                         desired_ports.add(str(port))
             except Exception as e:
-                print(f"   ⚠️ Error parsing service {service['name']}: {e}")
+                logger.warning("%s", f"   ⚠️ Error parsing service {service['name']}: {e}")
     
     # 2. Update UniFi
     own_session = False
@@ -780,7 +780,7 @@ def sync_unifi_groups(session=None, base_url=None):
             
             if not resp or resp.status_code != 200:
                 if resp:
-                    print(f"❌ UniFi Login Failed: HTTP {resp.status_code}")
+                    logger.error("%s", f"❌ UniFi Login Failed: HTTP {resp.status_code}")
                 return
                 
             csrf_token = resp.headers.get("x-csrf-token")
@@ -817,7 +817,7 @@ def sync_unifi_groups(session=None, base_url=None):
 
                 resp = unifi_request(session, "PUT", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{ip_group['_id']}", json=payload, headers=headers)
                 if resp and resp.status_code == 200:
-                    print(f"   Updated IP Group '{ip_group_name}': {list(desired_ips)}")
+                    logger.info("%s", f"   Updated IP Group '{ip_group_name}': {list(desired_ips)}")
                     # Verification with retry for eventual consistency
                     verified = False
                     for attempt in range(3):
@@ -827,20 +827,20 @@ def sync_unifi_groups(session=None, base_url=None):
                             verified_data = verify_resp.json().get("data", [{}])[0]
                             current_members_after_update = set(verified_data.get("members", []) or verified_data.get("group_members", []))
                             if current_members_after_update == desired_ips:
-                                print(f"   ✅ Verification: Group now contains {list(desired_ips)}")
+                                logger.info("%s", f"   ✅ Verification: Group now contains {list(desired_ips)}")
                                 verified = True
                                 break
                             else:
-                                print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
+                                logger.warning("%s", f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
                         else:
-                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
+                            logger.warning("%s", f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
                     if not verified:
-                        print(f"   ❌ Verification failed for IP Group '{ip_group_name}' after multiple attempts.")
+                        logger.error("%s", f"   ❌ Verification failed for IP Group '{ip_group_name}' after multiple attempts.")
                 else:
                     msg = resp.text if resp else "No response"
-                    print(f"   ❌ Failed to update IP Group '{ip_group_name}': {msg}")
+                    logger.error("%s", f"   ❌ Failed to update IP Group '{ip_group_name}': {msg}")
         else:
-            print(f"   ⚠️ Warning: IP Group '{ip_group_name}' not found in UniFi")
+            logger.warning("%s", f"   ⚠️ Warning: IP Group '{ip_group_name}' not found in UniFi")
             
         # Update Port Group
         port_group = next((g for g in groups if g.get("name") == port_group_name), None)
@@ -860,7 +860,7 @@ def sync_unifi_groups(session=None, base_url=None):
 
                 resp = unifi_request(session, "PUT", f"{base_url}/proxy/network/api/s/default/rest/firewallgroup/{port_group['_id']}", json=payload, headers=headers)
                 if resp and resp.status_code == 200:
-                    print(f"   Updated Port Group '{port_group_name}': {list(desired_ports)}")
+                    logger.info("%s", f"   Updated Port Group '{port_group_name}': {list(desired_ports)}")
                     # Verification with retry for eventual consistency
                     verified = False
                     for attempt in range(3):
@@ -870,23 +870,23 @@ def sync_unifi_groups(session=None, base_url=None):
                             verified_data = verify_resp.json().get("data", [{}])[0]
                             current_members_after_update = set(verified_data.get("members", []) or verified_data.get("group_members", []))
                             if current_members_after_update == desired_ports:
-                                print(f"   ✅ Verification: Group now contains {list(desired_ports)}")
+                                logger.info("%s", f"   ✅ Verification: Group now contains {list(desired_ports)}")
                                 verified = True
                                 break
                             else:
-                                print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
+                                logger.warning("%s", f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Group members do not match desired state.")
                         else:
-                            print(f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
+                            logger.warning("%s", f"   ⚠️ Verification attempt {attempt + 1}/3 failed: Could not fetch group details.")
                     if not verified:
-                        print(f"   ❌ Verification failed for Port Group '{port_group_name}' after multiple attempts.")
+                        logger.error("%s", f"   ❌ Verification failed for Port Group '{port_group_name}' after multiple attempts.")
                 else:
                     msg = resp.text if resp else "No response"
-                    print(f"   ❌ Failed to update Port Group '{port_group_name}': {msg}")
+                    logger.error("%s", f"   ❌ Failed to update Port Group '{port_group_name}': {msg}")
         else:
-            print(f"   ⚠️ Warning: Port Group '{port_group_name}' not found in UniFi")
+            logger.warning("%s", f"   ⚠️ Warning: Port Group '{port_group_name}' not found in UniFi")
             
     except Exception as e:
-        print(f"❌ Error syncing UniFi groups: {e}")
+        logger.error("%s", f"❌ Error syncing UniFi groups: {e}")
     finally:
         if own_session:
             logout_unifi(session, base_url)
@@ -1086,7 +1086,7 @@ def check_unifi_rule(session=None, base_url=None):
                     port = int(dst_port)
                 except (ValueError, TypeError):
                     # If conversion fails, log and leave as None
-                    print(f"⚠️ Warning: Invalid port value '{dst_port}' in UniFi rule")
+                    logger.warning("%s", f"⚠️ Warning: Invalid port value '{dst_port}' in UniFi rule")
             
             result = {
                 "enabled": target_rule["enabled"],
@@ -1119,13 +1119,13 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
     # Check if firewall control is enabled
     firewall_type = get_setting("FIREWALL_TYPE", required=False)
     if firewall_type == "none":
-        print("⚠️ Firewall control disabled, skipping firewall control")
+        logger.warning("%s", "⚠️ Firewall control disabled, skipping firewall control")
         return True
     
     unifi_rule_name = get_setting("UNIFI_RULE_NAME", required=False)
     
     if not unifi_rule_name:
-        print("⚠️ UniFi settings not configured, skipping firewall control")
+        logger.warning("%s", "⚠️ UniFi settings not configured, skipping firewall control")
         return True
     
     own_session = False
@@ -1135,14 +1135,14 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
         unifi_pass = get_setting("UNIFI_PASS", required=False)
         
         if not all([unifi_host, unifi_user, unifi_pass]):
-            print("⚠️ UniFi settings not configured, skipping firewall control")
+            logger.warning("%s", "⚠️ UniFi settings not configured, skipping firewall control")
             return True
             
         base_url = f"https://{unifi_host}"
         session = requests.Session()
         session.verify = get_unifi_verify_ssl()
         own_session = True
-        print(f"🔹 Connecting to UniFi Controller ({unifi_host})...")
+        logger.info("%s", f"🔹 Connecting to UniFi Controller ({unifi_host})...")
 
     try:
         if own_session:
@@ -1150,7 +1150,7 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
             
             if not resp or resp.status_code != 200:
                 if resp:
-                    print(f"❌ UniFi Login Failed: HTTP {resp.status_code}")
+                    logger.error("%s", f"❌ UniFi Login Failed: HTTP {resp.status_code}")
                 return False
                 
             csrf_token = resp.headers.get("x-csrf-token")
@@ -1158,7 +1158,7 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
                 session.headers.update({"X-CSRF-Token": csrf_token})
 
     except Exception as e:
-        print(f"❌ UniFi Connection Error: {e}")
+        logger.error("%s", f"❌ UniFi Connection Error: {e}")
         return False
 
     pf_url = f"{base_url}/proxy/network/api/s/default/rest/portforward"
@@ -1169,13 +1169,13 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
             return False
         rules = resp.json().get("data", [])
     except Exception as e:
-        print(f"❌ Error fetching rules: {e}")
+        logger.error("%s", f"❌ Error fetching rules: {e}")
         return False
 
     target_rule = next((r for r in rules if r.get("name") == unifi_rule_name), None)
 
     if not target_rule:
-        print(f"❌ Error: UniFi Rule '{unifi_rule_name}' not found!")
+        logger.error("%s", f"❌ Error: UniFi Rule '{unifi_rule_name}' not found!")
         return False
 
     # Track what changed
@@ -1192,10 +1192,10 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
         if str(old_port) != str(forward_port):
             target_rule["dst_port"] = str(forward_port)
             changes.append(f"port={forward_port}")
-            print(f"   Updating WAN port: {old_port} → {forward_port}")
+            logger.info("%s", f"   Updating WAN port: {old_port} → {forward_port}")
     
     if not changes:
-        print("   UniFi rule is already configured correctly.")
+        logger.info("%s", "   UniFi rule is already configured correctly.")
         return True
 
     try:
@@ -1203,14 +1203,14 @@ def toggle_unifi(enable_rule, forward_port=None, session=None, base_url=None):
         resp = unifi_request(session, "PUT", f"{pf_url}/{rule_id}", json=target_rule)
         
         if resp and resp.status_code == 200:
-            print(f"✅ UniFi Rule '{unifi_rule_name}' updated: {', '.join(changes)}.")
+            logger.info("%s", f"✅ UniFi Rule '{unifi_rule_name}' updated: {', '.join(changes)}.")
             return True
         else:
             msg = resp.text if resp else "No response"
-            print(f"❌ Failed to update rule: {msg}")
+            logger.error("%s", f"❌ Failed to update rule: {msg}")
             return False
     except Exception as e:
-        print(f"❌ Error updating rule: {e}")
+        logger.error("%s", f"❌ Error updating rule: {e}")
         return False
     finally:
         if own_session:
@@ -1294,7 +1294,7 @@ def send_discord_notification(message, title=None, color=None, webhook_url=None,
     try:
         requests.post(webhook_url, json=payload, timeout=5)
     except Exception as e:
-        print(f"⚠️ Failed to send Discord notification: {e}")
+        logger.warning("%s", f"⚠️ Failed to send Discord notification: {e}")
 
 def perform_health_check():
     """Perform a single health check iteration."""
@@ -1352,7 +1352,7 @@ def perform_health_check():
 
 def health_check_loop():
     """Background loop to check service health periodically."""
-    print("🔹 Starting background health check service...")
+    logger.info("%s", "🔹 Starting background health check service...")
     global _last_backup_time
     while not _shutdown_event.is_set():
         try:
@@ -1364,6 +1364,16 @@ def health_check_loop():
             interval = 10
         
         perform_health_check()
+
+        # Proactively warm UniFi status and public IP caches in background
+        try:
+            check_unifi_rule()
+        except Exception:
+            pass
+        try:
+            get_public_ip()
+        except Exception:
+            pass
         
         # Daily database backup
         now = time.time()
@@ -1379,7 +1389,7 @@ def start_health_check_thread():
 
 def port_rotation_loop():
     """Background loop to rotate firewall port periodically."""
-    print("🔹 Starting background port rotation service...")
+    logger.info("%s", "🔹 Starting background port rotation service...")
     while not _shutdown_event.is_set():
         try:
             interval_mins = int(get_setting("PORT_ROTATION_INTERVAL", required=False) or 0)
@@ -1509,11 +1519,11 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             actor = "Background Task"
 
     if not service.get('enabled'):
-        print(f"ℹ️ ({actor}) {service['name']} is already offline. Ignoring request.")
+        logger.info("%s", f"ℹ️ ({actor}) {service['name']} is already offline. Ignoring request.")
         return {"message": f"{service['name']} is already offline"}
 
     if not quiet:
-        print(f"\n🛑 === ({actor}) SHUTTING DOWN {service['name']} ===")
+        logger.info("%s", f"\n🛑 === ({actor}) SHUTTING DOWN {service['name']} ===")
     r = get_redis()
     if not r:
         return {"error": "Redis connection failed"}
@@ -1522,7 +1532,7 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
     service_name = service['service_name']
     subdomain_prefix = service['subdomain_prefix']
     
-    print("🔹 Removing Traefik Router...")
+    logger.info("%s", "🔹 Removing Traefik Router...")
     r.delete(f"traefik/http/routers/{router_name}/rule")
     r.delete(f"traefik/http/routers/{router_name}/service")
     r.delete(f"traefik/http/routers/{router_name}/entryPoints/0")
@@ -1544,7 +1554,7 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             unifi_base_url = f"https://{unifi_host}"
             unifi_session = requests.Session()
             unifi_session.verify = get_unifi_verify_ssl()
-            print(f"🔹 Connecting to UniFi Controller ({unifi_host})...")
+            logger.info("%s", f"🔹 Connecting to UniFi Controller ({unifi_host})...")
             resp = login_unifi_with_retry(unifi_session, unifi_base_url, unifi_user, unifi_pass)
             if resp and resp.status_code == 200:
                 csrf_token = resp.headers.get("x-csrf-token")
@@ -1552,13 +1562,13 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
                     unifi_session.headers.update({"X-CSRF-Token": csrf_token})
 
         remaining_count = count_active_routers()
-        print(f"   Active routers remaining: {remaining_count}")
+        logger.info("%s", f"   Active routers remaining: {remaining_count}")
 
         if remaining_count == 0:
-            print("   No other services active. Closing firewall...")
+            logger.info("%s", "   No other services active. Closing firewall...")
             toggle_unifi(False, session=unifi_session, base_url=unifi_base_url)
         else:
-            print("   ⚠️ Other services are still active. Firewall will remain OPEN.")
+            logger.warning("%s", "   ⚠️ Other services are still active. Firewall will remain OPEN.")
 
     elif routing_mode == 'vps':
         # Check active VPS services (excluding this one) before tearing down shared port 443 / WireGuard
@@ -1568,17 +1578,17 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             if s['enabled'] and s['id'] != service_id and routing.get_routing_mode(s) == 'vps'
         ]
         if not other_active_vps:
-            print("🔹 Cleaning up VPS forwarding...")
+            logger.info("%s", "🔹 Cleaning up VPS forwarding...")
             try:
                 routing.VPSManager.cleanup_port_forward(443)
             except Exception as e:
-                print(f"   ⚠️ Failed to cleanup VPS: {e}")
-            print("🔹 Stopping WireGuard...")
+                logger.warning("%s", f"   ⚠️ Failed to cleanup VPS: {e}")
+            logger.info("%s", "🔹 Stopping WireGuard...")
             routing.WireGuardManager.down()
         else:
-            print("   ⚠️ Other VPS services are still active. Keeping VPS forwarding and WireGuard up.")
+            logger.warning("%s", "   ⚠️ Other VPS services are still active. Keeping VPS forwarding and WireGuard up.")
 
-    print("🔹 Cleaning up DNS records...")
+    logger.info("%s", "🔹 Cleaning up DNS records...")
     if service.get('random_suffix', 1):
         # Random mode: Clean up any records matching prefix- pattern
         records = cf_request("GET", f"dns_records?type=A&name_contains={subdomain_prefix}-")
@@ -1586,11 +1596,11 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             count = 0
             for record in records.get('result', []):
                 if should_delete_dns_record(record['name'], subdomain_prefix):
-                    print(f"   Deleting: {record['name']}")
+                    logger.info("%s", f"   Deleting: {record['name']}")
                     cf_request("DELETE", f"dns_records/{record['id']}")
                     count += 1
             if count == 0:
-                print("   No DNS records found to clean.")
+                logger.info("%s", "   No DNS records found to clean.")
     else:
         # Static mode: Clean up the specific static record
         domain_root = get_setting("DOMAIN_ROOT")
@@ -1599,13 +1609,13 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
             records = cf_request("GET", f"dns_records?type=A&name={full_hostname}")
             if records and records.get('result'):
                 for record in records['result']:
-                    print(f"   Deleting: {record['name']}")
+                    logger.info("%s", f"   Deleting: {record['name']}")
                     cf_request("DELETE", f"dns_records/{record['id']}")
             else:
-                print("   No DNS records found to clean.")
+                logger.info("%s", "   No DNS records found to clean.")
 
     if routing_mode == 'unifi':
-        print("🔹 Cleaning up Origin Rule...")
+        logger.info("%s", "🔹 Cleaning up Origin Rule...")
         origin_rule_name = get_setting("ORIGIN_RULE_NAME", required=False) or "Service Rotation"
         
         # Get all currently enabled services to build the list of hostnames
@@ -1633,13 +1643,13 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
                         "enabled": True
                     }
                     cf_request("PATCH", f"rulesets/{ruleset_id}/rules/{target_rule['id']}", update_data)
-                    print(f"   Updated Origin Rule with remaining hosts: {origin_rule_name}")
+                    logger.info("%s", f"   Updated Origin Rule with remaining hosts: {origin_rule_name}")
                 else:
                     # No active services left, delete the rule
                     cf_request("DELETE", f"rulesets/{ruleset_id}/rules/{target_rule['id']}")
-                    print(f"   Deleted Origin Rule as no services are active: {origin_rule_name}")
+                    logger.info("%s", f"   Deleted Origin Rule as no services are active: {origin_rule_name}")
             else:
-                print("   No Origin Rule found to clean up.")
+                logger.info("%s", "   No Origin Rule found to clean up.")
 
     # Update database - clear hostname and port
     db.update_service_status(service_id, False, None, None)
@@ -1652,7 +1662,7 @@ def _turn_off_service_inner(service, actor=None, quiet=False, skip_unifi=False):
         if unifi_session:
             logout_unifi(unifi_session, unifi_base_url)
     
-    print(f"✅ {service['name']} ACCESS DISABLED.\n")
+    logger.info("%s", f"✅ {service['name']} ACCESS DISABLED.\n")
     return {"message": f"{service['name']} disabled successfully"}
 
 def rotate_firewall_port(actor=None):
@@ -1665,19 +1675,19 @@ def rotate_firewall_port(actor=None):
         return _rotate_firewall_port_inner(actor=actor)
 
 def _rotate_firewall_port_inner(actor=None):
-    print(f"\n🔄 === ({actor if actor else 'System'}) ROTATING FIREWALL PORT ===")
+    logger.info("%s", f"\n🔄 === ({actor if actor else 'System'}) ROTATING FIREWALL PORT ===")
     
     # 1. Check for active services
     services = db.get_all_services()
     active_services = [s for s in services if s['enabled']]
     
     if not active_services:
-        print("   No active services. Skipping rotation.")
+        logger.info("%s", "   No active services. Skipping rotation.")
         return {"error": "No active services"}
 
     # 2. Generate new port
     new_port = generate_random_port()
-    print(f"   New Port: {new_port}")
+    logger.info("%s", f"   New Port: {new_port}")
 
     # 3. Update UniFi Firewall
     unifi_session = None
@@ -1726,9 +1736,9 @@ def _rotate_firewall_port_inner(actor=None):
             update_data['action_parameters']['origin']['port'] = new_port
 
             cf_request("PATCH", f"rulesets/{ruleset_id}/rules/{target_rule['id']}", update_data)
-            print(f"   Updated Origin Rule port to {new_port}")
+            logger.info("%s", f"   Updated Origin Rule port to {new_port}")
         else:
-            print("   ⚠️ Origin Rule not found, skipping Cloudflare update")
+            logger.warning("%s", "   ⚠️ Origin Rule not found, skipping Cloudflare update")
     
     # 5. Update Database
     for service in active_services:
@@ -1740,7 +1750,7 @@ def _rotate_firewall_port_inner(actor=None):
     if unifi_session:
         logout_unifi(unifi_session, unifi_base_url)
         
-    print("✅ Firewall port rotated successfully.")
+    logger.info("%s", "✅ Firewall port rotated successfully.")
     return {"success": True, "port": new_port}
 
 def turn_on_service(service_id, force=False, actor=None, preferred_port=None, quiet=False, skip_unifi=False):
@@ -1761,7 +1771,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
             actor = "Background Task"
 
     if service.get('enabled') and not force:
-        print(f"ℹ️ ({actor}) {service['name']} is already online. Ignoring request.")
+        logger.info("%s", f"ℹ️ ({actor}) {service['name']} is already online. Ignoring request.")
         
         response = {
             "message": f"{service['name']} is already online",
@@ -1780,11 +1790,11 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         return response
     
     if not quiet:
-        print(f"\n🚀 === ({actor}) ENABLING {service['name']} ===")
+        logger.info("%s", f"\n🚀 === ({actor}) ENABLING {service['name']} ===")
     
     # Determine Routing Mode
     routing_mode = routing.get_routing_mode(service)
-    print(f"🔹 Routing Mode: {routing_mode.upper()}")
+    logger.info("%s", f"🔹 Routing Mode: {routing_mode.upper()}")
     
     # Check if any other service is already enabled and get its port
     # All active services share the same firewall port
@@ -1802,8 +1812,8 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
     
     # Validate that all active services are using the same port
     if len(active_service_ports) > 1:
-        print(f"⚠️ Warning: Multiple different ports detected across active services: {active_service_ports}")
-        print(f"   This may indicate a configuration issue. Using port from {active_service_with_port['name']}")
+        logger.warning("%s", f"⚠️ Warning: Multiple different ports detected across active services: {active_service_ports}")
+        logger.info("%s", f"   This may indicate a configuration issue. Using port from {active_service_with_port['name']}")
     
     # Port Selection logic:
     # 1. Use preferred_port if provided (e.g. from rotation)
@@ -1811,13 +1821,13 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
     # 3. Generate new random port
     if preferred_port:
         active_service_port = preferred_port
-        print(f"   Using preferred port: {active_service_port}")
+        logger.info("%s", f"   Using preferred port: {active_service_port}")
     elif active_service_with_port:
         active_service_port = active_service_with_port['current_port']
-        print(f"   Reusing existing port from {active_service_with_port['name']}: {active_service_port}")
+        logger.info("%s", f"   Reusing existing port from {active_service_with_port['name']}: {active_service_port}")
     else:
         active_service_port = generate_random_port()
-        print(f"   Generated new random port: {active_service_port}")
+        logger.info("%s", f"   Generated new random port: {active_service_port}")
         
     random_port = active_service_port  # Use the shared port
 
@@ -1845,7 +1855,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
             unifi_base_url = f"https://{unifi_host}"
             unifi_session = requests.Session()
             unifi_session.verify = get_unifi_verify_ssl()
-            print(f"🔹 Connecting to UniFi Controller ({unifi_host})...")
+            logger.info("%s", f"🔹 Connecting to UniFi Controller ({unifi_host})...")
             resp = login_unifi_with_retry(unifi_session, unifi_base_url, unifi_user, unifi_pass)
             if resp and resp.status_code == 200:
                 csrf_token = resp.headers.get("x-csrf-token")
@@ -1858,7 +1868,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
                 if not active_service_with_port:
                     opened_unifi_firewall = True
             else:
-                print("⚠️ Warning: UniFi update failed, but proceeding...")
+                logger.warning("%s", "⚠️ Warning: UniFi update failed, but proceeding...")
     
     elif routing_mode == 'vps':
         wg_client_addr = get_setting('WG_CLIENT_ADDRESS')
@@ -1866,18 +1876,18 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
             return {"error": "WG_CLIENT_ADDRESS not configured"}
 
         # VPS Gateway + WireGuard
-        print("🔹 Setting up WireGuard Connection...")
+        logger.info("%s", "🔹 Setting up WireGuard Connection...")
         success, msg = routing.WireGuardManager.up()
         if not success:
             return {"error": f"WireGuard failed: {msg}"}
-        print(f"   WireGuard: {msg}")
+        logger.info("%s", f"   WireGuard: {msg}")
 
-        print("🔹 Configuring VPS Port Forwarding...")
+        logger.info("%s", "🔹 Configuring VPS Port Forwarding...")
         local_ip = wg_client_addr.split('/')[0]
         try:
             # We forward Public 443 -> Local WG IP : Random Port
             routing.VPSManager.forward_port(443, local_ip, random_port)
-            print(f"   Forwarded VPS:443 -> {local_ip}:{random_port}")
+            logger.info("%s", f"   Forwarded VPS:443 -> {local_ip}:{random_port}")
         except Exception as e:
             return {"error": f"VPS configuration failed: {e}"}
     
@@ -1897,12 +1907,12 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         public_ip = get_public_ip()
         proxied = True # Orange cloud
     
-    print(f"   Service: {service['name']}")
-    print(f"   Target:  {full_hostname}")
-    print(f"   Port:    {random_port}")
-    print(f"   IP:      {public_ip} (Proxied: {proxied})")
+    logger.info("%s", f"   Service: {service['name']}")
+    logger.info("%s", f"   Target:  {full_hostname}")
+    logger.info("%s", f"   Port:    {random_port}")
+    logger.info("%s", f"   IP:      {public_ip} (Proxied: {proxied})")
 
-    print("🔹 Creating/Updating DNS Record...")
+    logger.info("%s", "🔹 Creating/Updating DNS Record...")
     # Check if record exists first (important for static mode to avoid duplicates/errors)
     existing_records = cf_request("GET", f"dns_records?type=A&name={full_hostname}")
     dns_data = {"type": "A", "name": new_subdomain, "content": public_ip, "ttl": 1, "proxied": proxied}
@@ -1910,11 +1920,11 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
     if existing_records and existing_records.get('result'):
         # Update existing record
         record_id = existing_records['result'][0]['id']
-        print(f"   Updating existing DNS record: {full_hostname}")
+        logger.info("%s", f"   Updating existing DNS record: {full_hostname}")
         result = cf_request("PUT", f"dns_records/{record_id}", dns_data)
     else:
         # Create new record
-        print(f"   Creating new DNS record: {full_hostname}")
+        logger.info("%s", f"   Creating new DNS record: {full_hostname}")
         result = cf_request("POST", "dns_records", dns_data)
         
     if not result:
@@ -1931,7 +1941,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         return {"error": "Failed to create DNS record"}
 
     if routing_mode == 'unifi':
-        print("🔹 Updating Origin Rule...")
+        logger.info("%s", "🔹 Updating Origin Rule...")
         origin_rule_name = get_setting("ORIGIN_RULE_NAME", required=False) or "Service Rotation"
         
         # Get all currently enabled services to build the list of hostnames
@@ -1968,7 +1978,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
                 update_data['action_parameters']['origin']['port'] = random_port
 
                 cf_request("PATCH", f"rulesets/{ruleset_id}/rules/{target_rule['id']}", update_data)
-                print(f"   Updated existing Origin Rule: {origin_rule_name}")
+                logger.info("%s", f"   Updated existing Origin Rule: {origin_rule_name}")
             else:
                 # Create a new rule
                 new_rule_data = {
@@ -1989,22 +1999,22 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
                 
                 result = cf_request("PUT", f"rulesets/{ruleset_id}", rules_data)
                 if result:
-                    print(f"   Created new Origin Rule: {origin_rule_name}")
+                    logger.info("%s", f"   Created new Origin Rule: {origin_rule_name}")
                 else:
-                    print("   ⚠️ Warning: Failed to create Origin Rule")
+                    logger.warning("%s", "   ⚠️ Warning: Failed to create Origin Rule")
 
 
     # Only clean up old random records if we are in random mode
     if service.get('random_suffix', 1):
-        print("🔹 Cleaning old DNS for this service...")
+        logger.info("%s", "🔹 Cleaning old DNS for this service...")
         records = cf_request("GET", f"dns_records?type=A&name_contains={service['subdomain_prefix']}-")
         if records:
             for record in records.get('result', []):
                 if should_delete_dns_record(record['name'], service['subdomain_prefix'], full_hostname):
-                    print(f"   Deleting old DNS record: {record['name']}")
+                    logger.info("%s", f"   Deleting old DNS record: {record['name']}")
                     cf_request("DELETE", f"dns_records/{record['id']}")
 
-    print("🔹 Updating Traefik...")
+    logger.info("%s", "🔹 Updating Traefik...")
     r = get_redis()
     if not r:
         return {"error": "Redis connection failed"}
@@ -2029,7 +2039,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         sync_unifi_groups(session=unifi_session, base_url=unifi_base_url)
 
         # Check if port is open (brief delay to allow firewall rule to propagate)
-        print("🔹 Verifying port accessibility...")
+        logger.info("%s", "🔹 Verifying port accessibility...")
         time.sleep(1)  # Brief 1-second delay to allow firewall rule to propagate
         port_check = check_port_open(random_port, session=unifi_session, base_url=unifi_base_url)
         
@@ -2038,15 +2048,15 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         
         port_open = port_check.get("open")
         if port_open is True:
-            print(f"✅ Port {random_port} verified as accessible")
+            logger.info("%s", f"✅ Port {random_port} verified as accessible")
             port_status = "verified"
         elif port_open is None:
             error_msg = port_check.get("error", "Unknown error")
-            print(f"⚠️ Port status unknown: {error_msg}")
+            logger.warning("%s", f"⚠️ Port status unknown: {error_msg}")
             port_status = "unknown"
         else:
             error_msg = port_check.get("error", "Unknown error")
-            print(f"⚠️ Port verification failed: {error_msg}")
+            logger.warning("%s", f"⚠️ Port verification failed: {error_msg}")
             port_status = "unverified"
     elif routing_mode == 'unifi' and skip_unifi:
         # If we skipped unifi because of rotation, assume port is still verified/ok
@@ -2056,7 +2066,7 @@ def _turn_on_service_inner(service, force=False, actor=None, preferred_port=None
         # unless we probe it from outside or trust the SSH command.
         port_status = "assumed_open"
 
-    print(f"✅ SUCCESS! {service['name']} live at: https://{full_hostname} (Port: {random_port})\n")
+    logger.info("%s", f"✅ SUCCESS! {service['name']} live at: https://{full_hostname} (Port: {random_port})\n")
     
     response = {
         "message": f"{service['name']} enabled successfully", 
@@ -2085,8 +2095,8 @@ def rotate_service(service_id, actor=None):
         return {"error": "Service is not currently enabled"}
     
     current_port = service.get('current_port')
-    print(f"\n🔄 === ({actor if actor else 'System'}) ROTATING {service['name']} URL ===")
-    print(f"🔹 Preserving port: {current_port}")
+    logger.info("%s", f"\n🔄 === ({actor if actor else 'System'}) ROTATING {service['name']} URL ===")
+    logger.info("%s", f"🔹 Preserving port: {current_port}")
     
     # Skip UniFi work during rotation as the internal IP/Port didn't change 
     # and the firewall port is being preserved.
@@ -2112,6 +2122,7 @@ app.config['WTF_CSRF_CHECK_DEFAULT'] = False # We will manually check to exempt 
 csrf = CSRFProtect(app)
 
 # Session security configuration
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # 2 MB upload cap
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -2203,10 +2214,10 @@ STARTUP_TIME = time.time()
 try:
     SETUP_WINDOW_SECONDS = int(os.environ.get('SETUP_WINDOW_SECONDS', '300'))
     if SETUP_WINDOW_SECONDS < 60 or SETUP_WINDOW_SECONDS > 3600:
-        print(f"⚠️ SETUP_WINDOW_SECONDS={SETUP_WINDOW_SECONDS} is outside recommended range (60-3600). Using default 300.")
+        logger.warning("%s", f"⚠️ SETUP_WINDOW_SECONDS={SETUP_WINDOW_SECONDS} is outside recommended range (60-3600). Using default 300.")
         SETUP_WINDOW_SECONDS = 300
 except ValueError:
-    print("⚠️ Invalid SETUP_WINDOW_SECONDS value. Using default 300.")
+    logger.warning("%s", "⚠️ Invalid SETUP_WINDOW_SECONDS value. Using default 300.")
     SETUP_WINDOW_SECONDS = 300
 
 def is_in_setup_window():
@@ -2670,9 +2681,12 @@ def check_2fa_enforcement():
            request.path in ('/logout', '/settings', '/healthz'):
             return
 
-        # Only exempt API routes when authenticated via X-API-Key (not browser cookie sessions)
-        if request.path.startswith('/api') and request.headers.get('X-API-Key'):
-            return
+        # Only exempt API routes when authenticated via a VALID X-API-Key (not arbitrary headers)
+        api_key = (request.headers.get('X-API-Key') or '').strip()
+        if request.path.startswith('/api') and api_key:
+            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            if db.get_api_key_by_hash(key_hash):
+                return
 
         enforce = db.get_setting('ENFORCE_2FA') == '1'
         user = db.get_user(current_user.id)
@@ -2865,7 +2879,7 @@ def delete_passkey(credential_id):
         db.delete_credential(credential_id)
         return jsonify({"success": True})
     except Exception as e:
-        print(f"Error deleting credential: {e}")
+        logger.info("%s", f"Error deleting credential: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/auth/2fa/setup/begin', methods=['POST'])
@@ -3047,7 +3061,7 @@ def onboarding_complete():
             flash('Setup completed successfully!', 'success')
         return redirect(url_for('index'))
     except Exception as e:
-        print(f"⚠️ Unexpected error in onboarding_complete: {str(e)}")
+        logger.warning("%s", f"⚠️ Unexpected error in onboarding_complete: {str(e)}")
         flash('An unexpected error occurred during setup. Please try again.', 'error')
         return redirect(url_for('onboarding'))
 
@@ -3089,7 +3103,7 @@ def new_service():
             flash(f'Validation Error: {str(e)}', 'error')
         except Exception as e:
             # Unexpected errors - log but don't expose details
-            print(f"⚠️ Unexpected error in new_service: {str(e)}")
+            logger.warning("%s", f"⚠️ Unexpected error in new_service: {str(e)}")
             flash('An unexpected error occurred while creating the service. Please check the logs.', 'error')
     
     return render_template('service_form.html', service=None)
@@ -3115,6 +3129,18 @@ def edit_service(service_id):
             show_regex = 1 if request.form.get('show_regex') else 0
             routing_mode = request.form.get('routing_mode', 'unifi')
             
+            # If service is active and routing identifiers changed, clean up old Redis/DNS entries first
+            identifiers_changed = (
+                service.get('router_name') != router_name
+                or service.get('service_name') != service_name
+                or service.get('subdomain_prefix') != subdomain_prefix
+                or service.get('routing_mode', 'unifi') != routing_mode
+            )
+            was_enabled = bool(service.get('enabled'))
+            if was_enabled and identifiers_changed:
+                logger.info("Service '%s' routing identifiers changed while active; cleaning up old route first...", service['name'])
+                turn_off_service(service_id, quiet=True)
+
             db.update_service(
                 service_id,
                 name=name,
@@ -3132,9 +3158,9 @@ def edit_service(service_id):
             if updated_service:
                 mqtt_manager.publish_discovery(updated_service)
             
-            # If service is active, refresh the external configuration (Redis, DNS, etc.)
-            if service.get('enabled'):
-                print(f"🔄 Service '{service['name']}' is active, refreshing configuration...")
+            # If service was active, refresh the external configuration (Redis, DNS, etc.)
+            if was_enabled:
+                logger.info("🔄 Service '%s' is active, refreshing configuration...", service['name'])
                 turn_on_service(service_id, force=True)
                 
             flash('Service updated successfully!', 'success')
@@ -3144,7 +3170,7 @@ def edit_service(service_id):
             flash(f'Validation Error: {str(e)}', 'error')
         except Exception as e:
             # Unexpected errors - log but don't expose details
-            print(f"⚠️ Unexpected error in edit_service: {str(e)}")
+            logger.warning("%s", f"⚠️ Unexpected error in edit_service: {str(e)}")
             flash('An unexpected error occurred while updating the service. Please check the logs.', 'error')
     
     return render_template('service_form.html', service=service)
@@ -3197,7 +3223,7 @@ def settings():
                 try:
                     mqtt_manager.reload()
                 except Exception as e:
-                    print(f"⚠️ Failed to reload MQTT: {e}")
+                    logger.warning("%s", f"⚠️ Failed to reload MQTT: {e}")
             
             if rejected_count > 0:
                 flash(f'Settings saved! Updated {saved_count} settings. ({rejected_count} invalid settings were ignored)', 'warning')
@@ -3205,7 +3231,7 @@ def settings():
                 flash('Settings saved successfully!', 'success')
             return redirect(url_for('settings'))
         except Exception as e:
-            print(f"⚠️ Unexpected error in settings: {str(e)}")
+            logger.warning("%s", f"⚠️ Unexpected error in settings: {str(e)}")
             flash('An unexpected error occurred while saving settings. Please try again.', 'error')
     
     raw_settings = db.get_all_settings()
@@ -3397,7 +3423,7 @@ def api_repair_service(service_id):
     # Repair: Update Redis with correct target URL from database
     r.set(f"traefik/http/services/{service['service_name']}/loadbalancer/servers/0/url", expected_target_url)
     
-    print(f"🔧 Repaired {service['name']}: {actual_target_url} → {expected_target_url}")
+    logger.info("%s", f"🔧 Repaired {service['name']}: {actual_target_url} → {expected_target_url}")
     
     return jsonify({
         "message": "Service configuration repaired successfully",
@@ -3839,13 +3865,26 @@ def api_restore_settings():
             
             count = 0
             rejected_count = 0
+            mqtt_changed = False
             for key, value in data.items():
                 if key not in ALLOWED_USER_SETTINGS:
                     logger.warning("Security: Rejected attempt to restore disallowed setting '%s' via backup restore", key)
                     rejected_count += 1
                     continue
-                db.set_setting(key, str(value))
+                str_val = str(value)
+                old_value = db.get_setting(key)
+                if old_value != str_val and key in ('VPS_HOST', 'VPS_SSH_KEY', 'VPS_SSH_PORT'):
+                    db.delete_setting('VPS_SSH_HOST_KEY')
+                    logger.info("Cleared VPS_SSH_HOST_KEY due to VPS config change during restore.")
+                db.set_setting(key, str_val)
+                if key.startswith('MQTT_'):
+                    mqtt_changed = True
                 count += 1
+            if mqtt_changed:
+                try:
+                    mqtt_manager.reload()
+                except Exception as e:
+                    logger.warning("Failed to reload MQTT after restore: %s", e)
             
             msg = f"Restored {count} settings successfully"
             if rejected_count > 0:
@@ -3861,8 +3900,8 @@ def api_restore_settings():
 @login_required
 def api_save_setting():
     """Save a single setting."""
-    data = request.get_json()
-    if not data or 'key' not in data or 'value' not in data:
+    data = request.get_json(silent=True) or {}
+    if 'key' not in data or 'value' not in data:
         return jsonify({"error": "Invalid request data"}), 400
     
     key = data['key']
@@ -3871,7 +3910,17 @@ def api_save_setting():
         return jsonify({"error": "Setting not allowed to be modified via API"}), 403
     
     try:
-        db.set_setting(key, data['value'])
+        old_value = db.get_setting(key)
+        value = data['value']
+        if old_value != value and key in ('VPS_HOST', 'VPS_SSH_KEY', 'VPS_SSH_PORT'):
+            db.delete_setting('VPS_SSH_HOST_KEY')
+            logger.info("Cleared VPS_SSH_HOST_KEY due to VPS config change via API.")
+        db.set_setting(key, value)
+        if key.startswith('MQTT_'):
+            try:
+                mqtt_manager.reload()
+            except Exception as e:
+                logger.warning("Failed to reload MQTT after API setting update: %s", e)
         return jsonify({"message": f"Setting '{key}' saved successfully"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -4144,7 +4193,7 @@ mqtt_manager.command_callback = handle_mqtt_command
 try:
     mqtt_manager.start()
 except Exception as e:
-    print(f"⚠️ Failed to start MQTT manager: {e}")
+    logger.warning("%s", f"⚠️ Failed to start MQTT manager: {e}")
 
 # Register signal handlers for graceful shutdown
 signal.signal(signal.SIGTERM, request_shutdown)
@@ -4158,7 +4207,7 @@ if __name__ != "__main__":
         start_health_check_thread()
         start_port_rotation_thread()
     except Exception as e:
-        print(f"⚠️ Failed to start background tasks: {e}")
+        logger.warning("%s", f"⚠️ Failed to start background tasks: {e}")
 
 if __name__ == "__main__":
     # Ensure environment is migrated/setup before any action
@@ -4168,6 +4217,6 @@ if __name__ == "__main__":
     start_health_check_thread()
     start_port_rotation_thread()
     
-    print(f"🚀 Starting Web UI on http://{API_HOST}:{API_PORT}")
-    print(f"   Configure settings and services at http://{API_HOST}:{API_PORT}/settings")
+    logger.info("%s", f"🚀 Starting Web UI on http://{API_HOST}:{API_PORT}")
+    logger.info("%s", f"   Configure settings and services at http://{API_HOST}:{API_PORT}/settings")
     app.run(host=API_HOST, port=API_PORT, debug=False)

@@ -197,16 +197,15 @@ function checkHealth(event) {
                 showToast('Health check completed', 'success');
                 
                 // data is now the result of get_status()
-                if (data.active_services) {
-                    data.active_services.forEach(svc => {
-                        updateServiceHealthUI(svc.id, svc.healthy, svc.status === 'ONLINE');
-                    });
-                }
+                const activeServices = data.active_services || [];
+                activeServices.forEach(svc => {
+                    updateServiceHealthUI(svc.id, svc.healthy, svc.status === 'ONLINE');
+                });
                 
                 // For services that are OFFLINE (not in active_services)
                 document.querySelectorAll('.service-card').forEach(card => {
                     const id = parseInt(card.dataset.serviceId);
-                    const isActive = data.active_services.some(svc => svc.id === id);
+                    const isActive = activeServices.some(svc => svc.id === id);
                     if (!isActive) {
                         updateServiceHealthUI(id, true, false);
                     }
