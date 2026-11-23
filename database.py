@@ -201,6 +201,29 @@ def init_db():
                 if not cursor.fetchone():
                     conn.execute("INSERT INTO settings (key, value) VALUES ('ENFORCE_2FA', '0')")
                 conn.execute("INSERT INTO schema_version (version) VALUES (11)")
+
+            # Migration 12: Create redirects table for short URLs and protected service redirects
+            if current_version < 12:
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='redirects'")
+                if not cursor.fetchone():
+                    conn.execute("""
+                        CREATE TABLE redirects (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                            target_type TEXT NOT NULL DEFAULT 'url',
+                            target_url TEXT,
+                            service_id INTEGER,
+                            passcode_hash TEXT,
+                            enabled INTEGER DEFAULT 1,
+                            hit_count INTEGER DEFAULT 0,
+                            last_accessed_at TIMESTAMP,
+                            expires_at TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (service_id) REFERENCES services (id) ON DELETE CASCADE
+                        )
+                    """)
+                conn.execute("INSERT INTO schema_version (version) VALUES (12)")
             
             conn.commit()
         except Exception:
@@ -529,6 +552,86 @@ def delete_api_key(key_id):
     """Delete an API key."""
     with get_db() as conn:
         conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+        conn.commit()
+
+# Redirect CRUD operations
+def get_all_redirects():
+    """Get all redirects with joined service info."""
+    with get_db() as conn:
+        cursor = conn.execute("""
+            SELECT r.*, s.name AS service_display_name, s.enabled AS service_enabled,
+                   s.current_hostname AS service_current_hostname
+            FROM redirects r
+            LEFT JOIN services s ON r.service_id = s.id
+            ORDER BY r.created_at DESC
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_redirect(redir_id):
+    """Get a specific redirect by ID."""
+    with get_db() as conn:
+        cursor = conn.execute("SELECT * FROM redirects WHERE id = ?", (redir_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+def get_redirect_by_slug(slug):
+    """Get a specific redirect by slug (case-insensitive)."""
+    with get_db() as conn:
+        cursor = conn.execute("SELECT * FROM redirects WHERE LOWER(slug) = LOWER(?)", (slug,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+def add_redirect(slug, target_type='url', target_url=None, service_id=None, passcode_hash=None, enabled=1, expires_at=None):
+    """Create a new redirect."""
+    with get_db() as conn:
+        cursor = conn.execute("""
+            INSERT INTO redirects (slug, target_type, target_url, service_id, passcode_hash, enabled, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (slug, target_type, target_url, service_id, passcode_hash, 1 if enabled else 0, expires_at))
+        conn.commit()
+        return cursor.lastrowid
+
+def update_redirect(redir_id, slug, target_type='url', target_url=None, service_id=None, passcode_hash=None, keep_passcode=False, enabled=1, expires_at=None):
+    """Update an existing redirect."""
+    with get_db() as conn:
+        if keep_passcode:
+            conn.execute("""
+                UPDATE redirects
+                SET slug = ?, target_type = ?, target_url = ?, service_id = ?,
+                    enabled = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (slug, target_type, target_url, service_id, 1 if enabled else 0, expires_at, redir_id))
+        else:
+            conn.execute("""
+                UPDATE redirects
+                SET slug = ?, target_type = ?, target_url = ?, service_id = ?,
+                    passcode_hash = ?, enabled = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (slug, target_type, target_url, service_id, passcode_hash, 1 if enabled else 0, expires_at, redir_id))
+        conn.commit()
+
+def set_redirect_enabled(redir_id, enabled):
+    """Enable or disable a redirect."""
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE redirects SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, (1 if enabled else 0, redir_id))
+        conn.commit()
+
+def record_redirect_hit(redir_id):
+    """Increment hit count and update last_accessed_at."""
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE redirects
+            SET hit_count = hit_count + 1, last_accessed_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (redir_id,))
+        conn.commit()
+
+def delete_redirect(redir_id):
+    """Delete a redirect."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM redirects WHERE id = ?", (redir_id,))
         conn.commit()
 
 def get_db_stats():

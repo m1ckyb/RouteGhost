@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}Redirects - RouteGhost{% endblock %}
+
+{% block content %}
+<div class="header-row">
+    <h2>🔗 Redirects</h2>
+    <div class="header-actions">
+        <button type="button" class="btn btn-primary" onclick="openCreateModal()">+ Add Redirect</button>
+    </div>
+</div>
+
+{% if redirects %}
+<div class="services-grid">
+    {% for r in redirects %}
+    <div class="service-card" data-redirect-id="{{ r.id }}">
+        <div class="service-header">
+            <div class="service-title-switch">
+                <div class="switch-75">
+                    <label class="switch">
+                        <input type="checkbox" {% if r.enabled %}checked{% endif %} onchange="toggleRedirect({{ r.id }}, this.checked, event)">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <h3>/redir/{{ r.slug }}</h3>
+            </div>
+            <div class="service-header-right">
+                {% if r.passcode_hash %}
+                    <span class="status-badge status-online" title="PIN / Password Protected">🔒 Protected</span>
+                {% else %}
+                    <span class="status-badge status-offline" title="No PIN or Password">🌐 Public</span>
+                {% endif %}
+                <button type="button" class="btn-icon"
+                        data-id="{{ r.id }}"
+                        data-slug="{{ r.slug }}"
+                        data-type="{{ r.target_type }}"
+                        data-url="{{ r.target_url or '' }}"
+                        data-service-id="{{ r.service_id or '' }}"
+                        data-has-passcode="{{ '1' if r.passcode_hash else '0' }}"
+                        data-enabled="{{ '1' if r.enabled else '0' }}"
+                        data-expires="{{ r.expires_at or '' }}"
+                        onclick="openEditModal(this)" title="Edit Redirect">✏️</button>
+                <button type="button" class="btn-icon btn-danger"
+                        data-slug="{{ r.slug }}"
+                        onclick="deleteRedirect({{ r.id }}, this.dataset.slug)" title="Delete Redirect">🗑️</button>
+            </div>
+        </div>
+
+        <div class="service-info">
+            <div class="info-row">
+                <strong>Short URL:</strong>
+                <a href="{{ base_url }}/redir/{{ r.slug }}" target="_blank" rel="noopener noreferrer" class="url-link">{{ base_url }}/redir/{{ r.slug }}</a>
+            </div>
+            <div class="info-row">
+                <strong>Type:</strong>
+                <code>{{ 'RouteGhost Service' if r.target_type == 'service' else 'External URL' }}</code>
+            </div>
+            {% if r.target_type == 'service' %}
+            <div class="info-row">
+                <strong>Service:</strong>
+                <code>{{ r.service_display_name or 'Deleted Service' }}</code>
+                {% if r.service_enabled and r.service_current_hostname %}
+                    <span style="color: var(--success); margin-left: 0.4rem;">(→ https://{{ r.service_current_hostname }})</span>
+                {% else %}
+                    <span style="color: var(--text-dim); margin-left: 0.4rem;">(Currently Offline)</span>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="info-row">
+                <strong>Destination:</strong>
+                <code>{{ r.target_url }}</code>
+            </div>
+            {% endif %}
+            <div class="info-row">
+                <strong>Hits:</strong> <code>{{ r.hit_count }}</code>
+                {% if r.last_accessed_at %}
+                    <span style="color: var(--text-dim); margin-left: 0.5rem;">Last: {{ r.last_accessed_at }}</span>
+                {% endif %}
+            </div>
+            {% if r.expires_at %}
+            <div class="info-row">
+                <strong>Expires:</strong> <code>{{ r.expires_at }}</code>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="service-actions" style="display: flex;">
+            <button type="button" class="btn btn-secondary"
+                    data-url="{{ base_url }}/redir/{{ r.slug }}"
+                    onclick="copyToClipboard(this.dataset.url, 'Redirect URL copied!')">
+                📋 Copy Link
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No redirects configured yet.</p>
+    <p style="color: var(--text-dim); margin-bottom: 1rem;">Create short URLs like <code>/redir/random-id</code> or PIN-protected links to your rotating RouteGhost services like <code>/redir/FuelApp</code>.</p>
+    <button type="button" class="btn btn-primary" onclick="openCreateModal()">Add Your First Redirect</button>
+</div>
+{% endif %}
+
+<!-- Create / Edit Redirect Modal -->
+<div id="redirectModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="redirectModalTitle">Add Redirect</h3>
+            <span class="modal-close" onclick="closeRedirectModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="redirectForm" onsubmit="saveRedirect(event)">
+                <input type="hidden" id="redir_id" value="">
+
+                <div class="form-group">
+                    <label for="redir_slug">Slug (leave blank for random ID)</label>
+                    <input type="text" id="redir_slug" placeholder="e.g. FuelApp or leave empty for random" pattern="[a-zA-Z0-9_-]*">
+                    <small style="color: var(--text-dim);">URL will be <code>{{ base_url }}/redir/&lt;slug&gt;</code></small>
+                </div>
+
+                <div class="form-group">
+                    <label for="redir_target_type">Redirect Type</label>
+                    <select id="redir_target_type" onchange="toggleTargetFields()">
+                        <option value="url">External URL (bit.ly style)</option>
+                        <option value="service">RouteGhost Service (tracks current rotating URL)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="target_url_group">
+                    <label for="redir_target_url">Destination URL</label>
+                    <input type="url" id="redir_target_url" placeholder="https://microsoft.com">
+                </div>
+
+                <div class="form-group" id="service_select_group" style="display: none;">
+                    <label for="redir_service_id">Target Service</label>
+                    <select id="redir_service_id">
+                        <option value="">-- Select a Service --</option>
+                        {% for svc in services %}
+                        <option value="{{ svc.id }}">{{ svc.name }} ({{ 'ONLINE' if svc.enabled else 'OFFLINE' }})</option>
+                        {% endfor %}
+                    </select>
+                    <small style="color: var(--text-dim);">Automatically forwards to the service's active rotating URL.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="redir_passcode">PIN or Password (optional — recommended for Services)</label>
+                    <input type="password" id="redir_passcode" placeholder="Leave blank for open link" autocomplete="new-password">
+                    <div id="clear_passcode_wrap" style="display: none; margin-top: 0.4rem;">
+                        <label style="display: inline-flex; align-items: center; gap: 0.4rem; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" id="redir_clear_passcode"> Remove existing PIN/password protection
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="redir_expires_at">Expiration (optional, UTC)</label>
+                    <input type="datetime-local" id="redir_expires_at">
+                </div>
+
+                <div class="modal-actions" style="margin-top: 1.25rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeRedirectModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="saveRedirectBtn">Save Redirect</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleTargetFields() {
+    const type = document.getElementById('redir_target_type').value;
+    document.getElementById('target_url_group').style.display = type === 'url' ? 'block' : 'none';
+    document.getElementById('service_select_group').style.display = type === 'service' ? 'block' : 'none';
+}
+
+function openCreateModal() {
+    document.getElementById('redirectModalTitle').textContent = 'Add Redirect';
+    document.getElementById('redir_id').value = '';
+    document.getElementById('redir_slug').value = '';
+    document.getElementById('redir_target_type').value = 'url';
+    document.getElementById('redir_target_url').value = '';
+    document.getElementById('redir_service_id').value = '';
+    document.getElementById('redir_passcode').value = '';
+    document.getElementById('redir_passcode').placeholder = 'Leave blank for open link';
+    document.getElementById('clear_passcode_wrap').style.display = 'none';
+    document.getElementById('redir_clear_passcode').checked = false;
+    document.getElementById('redir_expires_at').value = '';
+    toggleTargetFields();
+    document.getElementById('redirectModal').style.display = 'block';
+}
+
+function openEditModal(btn) {
+    document.getElementById('redirectModalTitle').textContent = 'Edit Redirect';
+    document.getElementById('redir_id').value = btn.dataset.id;
+    document.getElementById('redir_slug').value = btn.dataset.slug;
+    document.getElementById('redir_target_type').value = btn.dataset.type;
+    document.getElementById('redir_target_url').value = btn.dataset.url;
+    document.getElementById('redir_service_id').value = btn.dataset.serviceId;
+    document.getElementById('redir_passcode').value = '';
+    const hasPass = btn.dataset.hasPasscode === '1';
+    document.getElementById('redir_passcode').placeholder = hasPass
+        ? '•••••••• (protected — leave blank to keep)'
+        : 'Leave blank for open link';
+    document.getElementById('clear_passcode_wrap').style.display = hasPass ? 'block' : 'none';
+    document.getElementById('redir_clear_passcode').checked = false;
+    document.getElementById('redir_expires_at').value = btn.dataset.expires ? btn.dataset.expires.slice(0, 16) : '';
+    toggleTargetFields();
+    document.getElementById('redirectModal').style.display = 'block';
+}
+
+function closeRedirectModal() {
+    document.getElementById('redirectModal').style.display = 'none';
+}
+
+async function saveRedirect(event) {
+    event.preventDefault();
+    const id = document.getElementById('redir_id').value;
+    const payload = {
+        slug: document.getElementById('redir_slug').value.trim(),
+        target_type: document.getElementById('redir_target_type').value,
+        target_url: document.getElementById('redir_target_url').value.trim(),
+        service_id: document.getElementById('redir_service_id').value || null,
+        passcode: document.getElementById('redir_passcode').value,
+        clear_passcode: document.getElementById('redir_clear_passcode').checked,
+        expires_at: document.getElementById('redir_expires_at').value || null,
+    };
+
+    const url = id ? `/api/redirects/${id}` : '/api/redirects';
+    const method = id ? 'PUT' : 'POST';
+
+    try {
+        const resp = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast(data.message || 'Redirect saved!', 'success');
+            closeRedirectModal();
+            setTimeout(() => window.location.reload(), 600);
+        } else {
+            showToast('Error: ' + (data.error || 'Failed to save redirect'), 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function toggleRedirect(id, enabled, event) {
+    const input = event.target;
+    input.disabled = true;
+    try {
+        const resp = await fetch(`/api/redirects/${id}/toggle`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast(data.message, 'success');
+        } else {
+            input.checked = !enabled;
+            showToast('Error: ' + (data.error || 'Failed to toggle'), 'error');
+        }
+    } catch (e) {
+        input.checked = !enabled;
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        input.disabled = false;
+    }
+}
+
+async function deleteRedirect(id, slug) {
+    if (!confirm(`Delete redirect "/redir/${slug}"?`)) return;
+    try {
+        const resp = await fetch(`/api/redirects/${id}`, {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': getCsrfToken() }
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast(data.message || 'Redirect deleted', 'success');
+            setTimeout(() => window.location.reload(), 600);
+        } else {
+            showToast('Error: ' + (data.error || 'Failed to delete'), 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('redirectModal');
+    if (event.target === modal) closeRedirectModal();
+});
+</script>
+{% endblock %}

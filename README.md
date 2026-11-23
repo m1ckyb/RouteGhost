@@ -8,6 +8,7 @@ A security-focused Python application to temporarily expose local services (Jell
 
 *   **Dynamic Access**: Rotating subdomains and random port generation (1024-65535) for every session.
 *   **Security First**: Passkey (WebAuthn) authentication, 2FA (TOTP), and automated firewall toggling.
+*   **Redirect Service (`/redir/<slug>`)**: Built-in URL shortener for external links and PIN/password-protected dynamic links that automatically forward to a RouteGhost service's current rotating URL.
 *   **Routing Flexibility**: Choose between **Cloudflare Proxy** (Standard) or **VPS Gateway** (Ghost Mode) via WireGuard, configurable **per-service**.
 *   **Centralized Control**: Manage multiple services from a single dashboard.
 *   **Integrations**:
