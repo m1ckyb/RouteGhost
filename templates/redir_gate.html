@@ -123,7 +123,7 @@
             {% if error %}
                 <div class="gate-error">{{ error }}</div>
             {% endif %}
-            <form method="POST" action="{{ url_for('handle_redirect', slug=slug) }}">
+            <form method="POST" action="{{ url_for('redirects.handle_redirect', slug=slug) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="password" name="passcode" class="gate-input" placeholder="PIN or Password" autocomplete="off" autofocus required>
                 <button type="submit" class="gate-btn">Unlock &amp; Continue</button>

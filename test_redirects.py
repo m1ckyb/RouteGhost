@@ -102,6 +102,22 @@ class TestStaticUrlRedirects:
         )
         assert r2.status_code == 400
 
+        # Rejects embedded credentials (user:pass@host)
+        r3 = client.post(
+            "/api/redirects",
+            json={"slug": "phish", "target_type": "url", "target_url": "https://microsoft.com@evil.com"},
+            headers=auth_headers,
+        )
+        assert r3.status_code == 400
+
+        # Rejects malformed expires_at instead of silently failing open
+        r4 = client.post(
+            "/api/redirects",
+            json={"slug": "badexp", "target_type": "url", "target_url": "https://example.com", "expires_at": "not-a-date"},
+            headers=auth_headers,
+        )
+        assert r4.status_code == 400
+
 
 def _extract_csrf(html):
     import re
@@ -215,5 +231,35 @@ class TestProtectedServiceRedirects:
             )
             assert u.status_code == 200
             assert client.get("/redir/temp-link").status_code == 410
+            assert db.get_db_stats()["redirects"] >= 1
+        finally:
+            db.delete_redirect(redir_id)
+
+    def test_valid_pin_clears_rate_limit_and_api_key_cannot_bypass_redir_csrf(self, app, db, auth_headers):
+        client = app.test_client()
+        resp = client.post(
+            "/api/redirects",
+            json={"slug": "repeat-ok", "target_type": "url", "target_url": "https://example.com", "passcode": "1234"},
+            headers=auth_headers,
+        )
+        redir_id = resp.get_json()["redirect"]["id"]
+        try:
+            # 7 consecutive valid unlocks must succeed (rate limit cleared on success)
+            for _ in range(7):
+                r = client.post("/redir/repeat-ok", data={"passcode": "1234"}, follow_redirects=False)
+                assert r.status_code == 302
+
+            # With CSRF enabled, a bogus X-API-Key header MUST NOT bypass CSRF on /redir/<slug>
+            app.config["WTF_CSRF_ENABLED"] = True
+            try:
+                r_csrf = client.post(
+                    "/redir/repeat-ok",
+                    data={"passcode": "1234"},
+                    headers={"X-API-Key": "bogus-key"},
+                    follow_redirects=False,
+                )
+                assert r_csrf.status_code == 400
+            finally:
+                app.config["WTF_CSRF_ENABLED"] = False
         finally:
             db.delete_redirect(redir_id)

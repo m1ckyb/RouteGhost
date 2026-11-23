@@ -642,6 +642,7 @@ def get_db_stats():
         stats['users'] = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         stats['credentials'] = conn.execute("SELECT COUNT(*) FROM webauthn_credentials").fetchone()[0]
         stats['api_keys'] = conn.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
+        stats['redirects'] = conn.execute("SELECT COUNT(*) FROM redirects").fetchone()[0]
         
     if os.path.exists(DB_PATH):
         stats['size_bytes'] = os.path.getsize(DB_PATH)
